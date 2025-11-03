@@ -405,8 +405,7 @@ def run_optimization_sync(
             # User interrupted with Ctrl+C
             progress.update(task, description="⚠️  Optimization interrupted by user")
             logger.warning(
-                "Keyboard interrupt received (Ctrl+C). "
-                "Initiating graceful shutdown..."
+                "Keyboard interrupt received (Ctrl+C). Initiating graceful shutdown..."
             )
             console.print(
                 "\n[yellow]⚠️  Interrupt signal received. "
@@ -1229,7 +1228,7 @@ def check_environment_command(
             _check_ray_cluster_environment()
         else:
             console.print("[yellow]Checking local environment...[/yellow]")
-            from ..execution.trial_controller import LocalTrialController
+            from ..execution.controllers.trial_controller import LocalTrialController
 
             controller = LocalTrialController()
             controller._validate_environment()
@@ -1245,7 +1244,6 @@ def check_environment_command(
 def _check_ray_cluster_environment():
     """Check environment on all Ray cluster nodes."""
     try:
-
         if not ray.is_initialized():
             console.print("[yellow]Initializing Ray connection...[/yellow]")
             ray.init(address="auto")
