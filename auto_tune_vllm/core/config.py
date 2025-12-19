@@ -569,6 +569,36 @@ class ConfigValidator:
                 f"Fields cannot be in both benchmark constants and tunables: {overlap}"
             )
         
+        # Validate dataset vs synthetic data parameters
+        # If dataset is provided, prompt_tokens and output_tokens cannot be specified
+        dataset_value = benchmark_constants.get("dataset")
+        if dataset_value is not None:
+            # Check constants - these are synthetic data parameters
+            synthetic_params_in_constants = []
+            if "prompt_tokens" in benchmark_constants:
+                synthetic_params_in_constants.append("prompt_tokens")
+            if "output_tokens" in benchmark_constants:
+                synthetic_params_in_constants.append("output_tokens")
+            
+            if synthetic_params_in_constants:
+                raise ValueError(
+                    f"Cannot specify synthetic data parameters ({synthetic_params_in_constants}) "
+                    f"when dataset is provided. Dataset: {dataset_value}"
+                )
+            
+            # Check tunables - these are also synthetic data parameters
+            synthetic_params_in_tunables = []
+            if "prompt_tokens" in benchmark_tunables_raw:
+                synthetic_params_in_tunables.append("prompt_tokens")
+            if "output_tokens" in benchmark_tunables_raw:
+                synthetic_params_in_tunables.append("output_tokens")
+            
+            if synthetic_params_in_tunables:
+                raise ValueError(
+                    f"Cannot specify synthetic data parameters as tunables ({synthetic_params_in_tunables}) "
+                    f"when dataset is provided. Dataset: {dataset_value}"
+                )
+        
         # Build BenchmarkConfig from constants only
         benchmark = BenchmarkConfig(**benchmark_constants)
         
