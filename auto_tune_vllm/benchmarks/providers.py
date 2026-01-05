@@ -512,6 +512,7 @@ class CustomBenchmarkTemplate(BenchmarkProvider):
 
 
 # Registry for dynamic benchmark provider loading (for reference/documentation)
+# Note: MLPerfBenchmark is imported in trial_controller.py to avoid circular imports
 BENCHMARK_PROVIDERS = {
     "guidellm": GuideLLMBenchmark,
     "custom_template": CustomBenchmarkTemplate,

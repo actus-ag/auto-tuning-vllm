@@ -16,6 +16,7 @@ import ray
 from ray.exceptions import GetTimeoutError
 
 from ..benchmarks.providers import BenchmarkProvider, GuideLLMBenchmark
+from ..benchmarks.mlperf_provider import MLPerfBenchmark
 from ..core.trial import ExecutionInfo, TrialConfig, TrialResult
 from ..logging.manager import CentralizedLogger
 
@@ -536,6 +537,8 @@ class BaseTrialController(TrialController):
 
         if benchmark_type == "guidellm":
             return GuideLLMBenchmark()
+        elif benchmark_type == "mlperf":
+            return MLPerfBenchmark()
         else:
             # Import custom provider by name
             # This enables extensibility for custom benchmarks
@@ -1964,11 +1967,14 @@ class WorkloadActor:
     def _create_benchmark_provider(self, trial_config: TrialConfig):
         """Create appropriate benchmark provider."""
         from ..benchmarks.providers import BenchmarkProvider, GuideLLMBenchmark
+        from ..benchmarks.mlperf_provider import MLPerfBenchmark
         
         benchmark_type = trial_config.benchmark_config.benchmark_type
         
         if benchmark_type == "guidellm":
             return GuideLLMBenchmark()
+        elif benchmark_type == "mlperf":
+            return MLPerfBenchmark()
         else:
             # Import custom provider
             try:
