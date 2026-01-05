@@ -198,7 +198,11 @@ The `benchmark` section controls how performance measurements are conducted. Thi
 ### Core Benchmark Settings
 
 #### `benchmark_type` (string, optional)
-The benchmarking framework to use. Currently only "guidellm" is supported. Defaults to "guidellm".
+The benchmarking framework to use. Supported values:
+- **`"guidellm"`** (default): GuideLLM benchmark provider for comprehensive performance testing
+- **`"mlperf"`**: MLPerf benchmark provider (skeleton implementation - see [MLPerf Benchmark Provider](#mlperf-benchmark-provider) section)
+
+Defaults to `"guidellm"`.
 
 #### `model` (string, required)
 The HuggingFace model identifier to benchmark. This should match the model you plan to serve in production. Examples:
@@ -327,7 +331,7 @@ benchmark:
 #### Constants vs Tunables
 
 **Constants** (must be in top-level `benchmark` section):
-- `benchmark_type`: Benchmark provider (e.g., "guidellm")
+- `benchmark_type`: Benchmark provider (e.g., "guidellm", "mlperf")
 - `model`: Model identifier (required)
 - `max_seconds`: Benchmark duration
 - `dataset`: Dataset path or null for synthetic data
@@ -447,6 +451,67 @@ benchmark:
   
   tunables: {}  # Empty - no tunables when using real dataset
 ```
+
+### MLPerf Benchmark Provider
+
+The MLPerf benchmark provider (`benchmark_type: "mlperf"`) is a skeleton implementation that can be extended with actual MLPerf benchmark execution logic. Currently, it serves as a testing and development tool that displays all parameters received by the benchmark execution function.
+
+#### Current Status
+
+The MLPerf provider is a **skeleton implementation** that:
+- Displays all parameters (model_url and BenchmarkConfig fields) for testing purposes
+- Returns placeholder results from benchmark execution
+- Provides a foundation for implementing actual MLPerf benchmark integration
+
+#### Usage
+
+To use the MLPerf benchmark provider, set `benchmark_type: "mlperf"` in your benchmark configuration:
+
+```yaml
+benchmark:
+  benchmark_type: "mlperf"
+  model: "Qwen/Qwen3-30B-A3B-FP8"
+  max_seconds: 300
+  # ... other benchmark configuration options
+```
+
+#### Parameter Display
+
+When the MLPerf provider runs, it will log all parameters it receives:
+- **model_url**: The vLLM server URL (e.g., "http://localhost:8000/v1")
+- **BenchmarkConfig fields**: All configuration parameters including:
+  - `model`: Model identifier
+  - `max_seconds`: Benchmark duration
+  - `dataset`: Dataset configuration
+  - `prompt_tokens`, `output_tokens`: Token counts
+  - `rate`: Request rate
+  - `samples`: Number of samples
+  - And all other BenchmarkConfig fields
+
+This parameter display is useful for:
+- Understanding what data is available for the actual implementation
+- Testing the integration with the auto-tune-vllm framework
+- Debugging configuration issues
+
+#### Implementation Notes
+
+The MLPerf provider is located in `auto_tune_vllm/benchmarks/mlperf_provider.py`. To implement the actual MLPerf benchmark execution:
+
+1. Replace the dummy process in `start_benchmark()` with actual MLPerf benchmark invocation
+2. Implement proper result parsing in `parse_results()` to extract MLPerf metrics
+3. Ensure the returned metrics dictionary includes values that can be used for Optuna optimization
+
+#### Expected Results Format
+
+The `parse_results()` method should return a dictionary with benchmark metrics. The skeleton implementation returns placeholder values for:
+- `throughput`: Requests/second or tokens/second
+- `latency_p50`, `latency_p90`, `latency_p95`, `latency_p99`: Percentile latencies in ms
+- `latency_mean`: Mean latency in ms
+- `error_rate`: Error percentage
+- `total_requests`: Total number of requests
+- `successful_requests`: Number of successful requests
+
+These metrics can be used as objectives in the optimization configuration.
 
 ## Logging Configuration
 

@@ -21,6 +21,13 @@ class MLPerfBenchmark(BenchmarkProvider):
     This is a skeleton implementation that displays all parameters
     received by the core function. It should be filled in with the
     actual MLPerf benchmark execution logic.
+    
+    TODO-mlperf: Implement the following:
+    - Replace dummy process in start_benchmark() with actual MLPerf benchmark invocation
+    - Implement parse_results() to extract real metrics from MLPerf output
+    - Map BenchmarkConfig parameters to MLPerf command-line arguments
+    - Handle MLPerf-specific configuration options
+    - Ensure proper error handling and result validation
     """
 
     def start_benchmark(
@@ -65,6 +72,12 @@ class MLPerfBenchmark(BenchmarkProvider):
         self._logger.info("Note: This is a skeleton implementation.")
         self._logger.info("The actual MLPerf benchmark execution logic should be implemented here.")
         self._logger.info("=" * 80)
+        
+        # TODO-mlperf: Replace the dummy process below with actual MLPerf benchmark execution
+        # - Build the MLPerf command with appropriate arguments (model_url, config parameters)
+        # - Start the MLPerf benchmark subprocess
+        # - Ensure results are written to self._results_file for later parsing
+        # - Handle MLPerf-specific configuration options from BenchmarkConfig
         
         # Create a dummy process that just exits immediately
         # In a real implementation, this would start the actual MLPerf benchmark
@@ -116,6 +129,7 @@ sys.exit(0)
             )
             self._process_pgid = None
         
+        # TODO-mlperf: Remove the dummy script cleanup code below once actual MLPerf implementation is added
         # Clean up the temporary script after a short delay
         # (in a real implementation, this wouldn't be needed)
         import threading
@@ -142,6 +156,13 @@ sys.exit(0)
             Dictionary with benchmark metrics (skeleton values)
         """
         self._logger.info("Parsing MLPerf benchmark results (skeleton)")
+        
+        # TODO-mlperf: Implement actual MLPerf results parsing
+        # - Read results from self._results_file (set in start_benchmark)
+        # - Parse MLPerf output format (JSON, XML, or other format used by MLPerf)
+        # - Extract key metrics: throughput, latency percentiles, error rates, etc.
+        # - Return dictionary with metrics that can be used for Optuna optimization
+        # - Ensure all returned metrics are numeric (float/int) for optimization
         
         # Return skeleton results structure
         # In a real implementation, these would be parsed from the actual results file

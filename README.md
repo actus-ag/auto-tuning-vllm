@@ -10,7 +10,7 @@ A distributed hyperparameter optimization framework for vLLM serving, built with
 
 - 🚀 **Distributed Optimization**: Scale across multiple GPUs and nodes using Ray
 - 🎯 **Flexible Backends**: Run locally or on Ray clusters  
-- 📊 **Rich Benchmarking**: Built-in GuideLLM support + custom benchmark providers
+- 📊 **Rich Benchmarking**: Built-in GuideLLM and MLPerf support + custom benchmark providers
 - 🗄️ **Centralized Storage**: PostgreSQL for trials, metrics, and logs
 - ⚙️ **Easy Configuration**: YAML-based study and parameter configuration
 - 📈 **Multi-Objective**: Support for throughput vs latency trade-offs
