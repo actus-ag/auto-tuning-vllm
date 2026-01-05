@@ -19,13 +19,23 @@ optimization:
   max_concurrent: 2
 
 benchmark:
+  # Constants
   benchmark_type: "guidellm"
   model: "RedHatAI/Qwen3-30B-A3B-FP8-dynamic" 
   max_seconds: 300
   dataset: null  # Use synthetic data
-  prompt_tokens: 10000   
+  logging_level: "INFO"
+  prompt_tokens: 1000
   output_tokens: 1000
-  rate: 10
+  samples: 100
+
+  # Tunables
+  tunables:
+    rate:
+      enabled: true
+      min: 5
+      max: 20
+      step: 5
 
 logging:
   file_path: "/tmp/auto-tune-vllm-local-run/logs"  # Local temp folder

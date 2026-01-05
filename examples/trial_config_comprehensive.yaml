@@ -10,12 +10,35 @@ optimization:
   n_trials: 200
 
 benchmark:
+  # Constants
   benchmark_type: "guidellm"
   model: "facebook/opt-125m"  # Smaller model for testing
   max_seconds: 180
   dataset: null
-  prompt_tokens: 500
-  output_tokens: 500
+  logging_level: "INFO"
+  
+  # Tunables: optimize benchmark parameters
+  tunables:
+    rate:
+      enabled: true
+      min: 10
+      max: 50
+      step: 10
+    samples:
+      enabled: true
+      min: 200
+      max: 1000
+      step: 200
+    prompt_tokens:
+      enabled: true
+      min: 100
+      max: 1000
+      step: 100
+    output_tokens:
+      enabled: true
+      min: 100
+      max: 1000
+      step: 100
 
 logging:
   file_path: "/tmp/auto-tune-vllm-comprehensive"

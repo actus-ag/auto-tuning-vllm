@@ -254,9 +254,9 @@ Maximum output length in tokens. Default: 3072
 ##### `dataset` (string)
 Path to a real dataset file or HuggingFace dataset identifier. Supported formats:
 - Local JSONL files: `"path/to/dataset.jsonl"`
-- HuggingFace datasets: `"huggingface/dataset_name"`
+- HuggingFace datasets: `"hf://dataset_name"` (e.g., `"hf://squad"` or `"hf://huggingface/squad"`)
 
-When using real datasets, the `prompt_tokens` and `output_tokens` settings are ignored.
+When using real datasets, the `prompt_tokens` and `output_tokens` settings cannot be specified (neither as constants nor as tunables).
 
 ### Load Configuration
 
@@ -271,6 +271,182 @@ Default: 50
 
 #### `processor` (string, optional)
 Separate model for request processing if different from the served model. Rarely needed - defaults to the same value as `model`.
+
+#### `logging_level` (string, optional)
+Logging level for GuideLLM benchmark execution. Available levels:
+- **`"DEBUG"`**: Detailed debugging information
+- **`"INFO"`**: General information (default)
+- **`"WARNING"`**: Only warnings and errors
+- **`"ERROR"`**: Only error messages
+- **`"CRITICAL"`**: Only critical errors
+
+### Benchmark Tunables
+
+The benchmark configuration separates **constants** (fixed values for all trials) from **tunables** (parameters optimized by Optuna). This allows you to optimize benchmark parameters like request rate, sample count, and token lengths alongside vLLM parameters.
+
+#### Structure
+
+The `benchmark` section has two parts:
+
+1. **Constants**: Fixed values at the top level (e.g., `model`, `benchmark_type`, `max_seconds`)
+2. **Tunables**: Optimizable parameters in the `tunables` subsection
+
+```yaml
+benchmark:
+  # Constants: fixed for all trials
+  benchmark_type: "guidellm"
+  model: "Qwen/Qwen3-30B-A3B-FP8"
+  max_seconds: 300
+  dataset: null
+  logging_level: "INFO"
+  
+  # Tunables: optimized by Optuna
+  tunables:
+    rate:
+      enabled: true
+      min: 10
+      max: 100
+      step: 10
+    samples:
+      enabled: true
+      min: 500
+      max: 2000
+      step: 500
+    prompt_tokens:
+      enabled: true
+      min: 100
+      max: 2000
+      step: 100
+    output_tokens:
+      enabled: true
+      min: 100
+      max: 2000
+      step: 100
+```
+
+#### Constants vs Tunables
+
+**Constants** (must be in top-level `benchmark` section):
+- `benchmark_type`: Benchmark provider (e.g., "guidellm")
+- `model`: Model identifier (required)
+- `max_seconds`: Benchmark duration
+- `dataset`: Dataset path or null for synthetic data
+- `logging_level`: GuideLLM logging verbosity
+- `processor`: Processor model (optional)
+- `concurrency`: Legacy concurrency setting (use `rate` instead)
+
+**Tunables** (must be in `benchmark.tunables` section):
+- `rate`: Number of concurrent requests (integer range)
+- `samples`: Number of samples to take (integer range)
+- `prompt_tokens`: Base prompt token count (integer range) - only when using synthetic data
+- `output_tokens`: Base output token count (integer range) - only when using synthetic data
+
+#### Tunable Configuration
+
+Benchmark tunables use the same configuration format as vLLM parameters:
+
+**Range Parameters** (integer):
+```yaml
+tunables:
+  rate:
+    enabled: true
+    min: 10
+    max: 100
+    step: 10
+```
+
+**List Parameters** (categorical):
+```yaml
+tunables:
+  rate:
+    enabled: true
+    options: [10, 20, 50, 100]
+```
+
+**Boolean Parameters**:
+```yaml
+tunables:
+  some_flag:
+    enabled: true
+    # Will test both True and False
+```
+
+#### Important Rules
+
+1. **No Overlap**: A field cannot appear in both constants and tunables. The validator will raise an error if you try.
+
+2. **Required Section**: The `tunables` section is required (can be empty `{}` if no tunables are needed).
+
+3. **Dataset vs Synthetic Data**: 
+   - If `dataset` is provided (not `null`), `prompt_tokens` and `output_tokens` cannot be specified (neither as constants nor tunables).
+   - If `dataset` is `null`, you can use `prompt_tokens` and `output_tokens` as constants or tunables.
+
+4. **Default Values**: If a tunable is not specified, the BenchmarkConfig default value is used (e.g., `rate: 50`, `samples: 1000`).
+
+#### Example: Optimizing Request Rate
+
+```yaml
+benchmark:
+  benchmark_type: "guidellm"
+  model: "facebook/opt-125m"
+  max_seconds: 180
+  dataset: null
+  logging_level: "INFO"
+  
+  tunables:
+    rate:
+      enabled: true
+      min: 10
+      max: 100
+      step: 10
+    # samples, prompt_tokens, output_tokens use defaults
+```
+
+#### Example: All Synthetic Data Parameters as Tunables
+
+```yaml
+benchmark:
+  benchmark_type: "guidellm"
+  model: "Qwen/Qwen3-30B-A3B-FP8"
+  max_seconds: 300
+  dataset: null
+  logging_level: "INFO"
+  
+  tunables:
+    rate:
+      enabled: true
+      min: 20
+      max: 80
+      step: 10
+    samples:
+      enabled: true
+      min: 500
+      max: 2000
+      step: 500
+    prompt_tokens:
+      enabled: true
+      min: 500
+      max: 2000
+      step: 250
+    output_tokens:
+      enabled: true
+      min: 500
+      max: 2000
+      step: 250
+```
+
+#### Example: Using Real Dataset (No Tunables)
+
+```yaml
+benchmark:
+  benchmark_type: "guidellm"
+  model: "facebook/opt-125m"
+  max_seconds: 300
+  dataset: "hf://squad"  # HuggingFace dataset
+  logging_level: "INFO"
+  
+  tunables: {}  # Empty - no tunables when using real dataset
+```
 
 ## Logging Configuration
 
@@ -602,8 +778,8 @@ benchmark:
   model: "facebook/opt-125m"
   max_seconds: 60
   dataset: null
-  prompt_tokens: 100
-  output_tokens: 100
+  logging_level: "INFO"
+  tunables: {}  # No tunables for quick testing
 
 parameters:
   gpu_memory_utilization:
@@ -637,9 +813,18 @@ benchmark:
   model: "Qwen/Qwen3-30B-A3B-FP8"
   max_seconds: 300
   dataset: null
-  prompt_tokens: 1000
-  output_tokens: 1000
-  rate: 100
+  logging_level: "INFO"
+  tunables:
+    rate:
+      enabled: true
+      min: 50
+      max: 150
+      step: 25
+    samples:
+      enabled: true
+      min: 500
+      max: 2000
+      step: 500
 
 logging:
   file_path: "/var/log/auto-tune-vllm"
@@ -675,6 +860,8 @@ benchmark:
   model: "facebook/opt-125m"
   max_seconds: 120
   dataset: null
+  logging_level: "INFO"
+  tunables: {}
 
 logging:
   file_path: "/tmp/optimization/logs"

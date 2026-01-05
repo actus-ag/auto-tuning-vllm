@@ -29,6 +29,7 @@ benchmark:
   dataset: null
   prompt_tokens: 100
   output_tokens: 100
+  tunables: {}
   
 # No logging section specified - will use console logging only
 

@@ -17,12 +17,20 @@ optimization:
   n_trials: 100
   
 benchmark:
+  # Constants: fixed values for all trials
   benchmark_type: "guidellm"
   model: "Qwen/Qwen3-30B-A3B-FP8"
   max_seconds: 300
   dataset: null  # Use synthetic data
   prompt_tokens: 1000
   output_tokens: 1000
+
+  tunables: 
+    rate:
+      enabled: true
+      min: 10
+      max: 100
+      step: 10
   
 logging:
   # At least one of the following must be provided and must be valid
