@@ -52,6 +52,12 @@ class TrialConfig:
     parameter_configs: Optional[Dict[str, Any]] = (
         None  # Parameter configuration metadata for determining env vars
     )
+    gaie_parameters: Dict[str, Any] = field(
+        default_factory=dict
+    )  # GAIE parameters from Optuna
+    gaie_parameter_configs: Optional[Dict[str, Any]] = (
+        None  # GAIE parameter configuration metadata
+    )
     static_environment_variables: Dict[str, str] = field(
         default_factory=dict
     )  # Static environment variables
@@ -155,6 +161,10 @@ class ExecutionInfo:
     vllm_startup_duration: Optional[float] = None
     benchmark_duration: Optional[float] = None
     trial_status: Optional[str] = None  # "success", "vllm_crash", "benchmark_crash"
+    
+    # Helm deployment tracking
+    helm_release_name: Optional[str] = None  # Helm release name for reproducibility
+    benchmark_job_name: Optional[str] = None  # Kubernetes Job name for benchmark
 
     def mark_vllm_started(self):
         """Mark when vLLM server process started."""

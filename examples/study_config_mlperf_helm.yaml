@@ -1,0 +1,103 @@
+# Example study configuration for MLPerf Harness with Helm backend
+# This demonstrates using MLPerf harness in a Kubernetes/Helm deployment environment
+
+study:
+  prefix: "mlperf-server-test"
+  # Using PostgreSQL database with port-forwarding
+  # REQUIRED: Run this command in a separate terminal before starting optimization:
+  #   kubectl port-forward -n llm-d-trials svc/postgresql 5432:5432
+  # Default credentials: postgres/postgres (from postgresql-secret)
+  # The optuna database will be created automatically if it doesn't exist
+  database_url: "postgresql://postgres:postgres@localhost:5432/optuna"
+
+# Execution backend configuration
+execution:
+  backend: "helm"
+  helm:
+    # REQUIRED: Specify chart type explicitly
+    chart_type: "llm-d-modelservice"
+    
+    # Deploy full stack (infra, gaie, modelservice) for prefix-aware routing
+    deploy_full_stack: true
+    release_name_postfix: "mlperf-test"
+    
+    # Infra chart configuration
+    infra_chart_repo: "https://llm-d-incubation.github.io/llm-d-infra/"
+    infra_chart_name: "llm-d-infra"
+    infra_chart_version: "v1.3.4"
+    
+    # Gaie chart configuration
+    gaie_chart_version: "v1.2.0"
+    
+    # Use llm-d-modelservice chart from repository
+    chart_repo: "https://llm-d-incubation.github.io/llm-d-modelservice/"
+    chart_name: "llm-d-modelservice"
+    chart_version: "v0.3.17"
+    
+    namespace: "llm-d-trials"  # Kubernetes namespace for deployments
+    benchmark_image: "quay.io/rh-ee-nmiriyal/mlperf-6.0:harness"  # MLPerf harness image
+    kubeconfig: "/path/to/your/kubeconfig"  # Custom kubeconfig path
+
+optimization:
+  preset: "high_throughput"  # Optimize for maximum throughput
+  sampler: "tpe"  # Tree-structured Parzen Estimator
+  n_trials: 20
+  # Note: Helm backend does not support parallel trials - max_concurrent_trials is automatically set to 1
+
+benchmark:
+  benchmark_type: "mlperf"
+  model: "RedHatAI/Meta-Llama-3.1-8B-Instruct-FP8"
+  scenario: "Server"  # MLPerf Server scenario
+  dataset_path: "cnn_eval.json"  # Path to dataset file (must be accessible in the pod)
+  lg_model_name: "llama3_1-8b"  # LoadGen model name
+  num_samples: 13368  # Number of samples to process
+  output_dir: "LLAMA3_1-8B-SERVER"  # Output directory for results
+  mlflow_experiment_name: "mlperf-helm-test"  # MLflow experiment name
+  mlflow_host: "150.239.115.202"  # MLflow host address
+  test_mode: "performance"  # Test mode: performance or accuracy
+  
+  # Tunables: optimized by Optuna
+  tunables:
+    server_target_qps:
+      enabled: true
+      min: 10.0
+      max: 50.0
+      step: 5.0
+    server_coalesce_queries:
+      enabled: true
+      options: [True, False]  # Boolean parameter - must explicitly specify options
+
+logging:
+  # Using PostgreSQL for logging (same database as study)
+  # Uses same port-forward as study database
+  database_url: "postgresql://postgres:postgres@localhost:5432/optuna"
+  log_level: "INFO"
+
+parameters:
+  # vLLM parameters to optimize
+  max_num_batched_tokens:
+    enabled: true
+    min: 2048
+    max: 16384
+    step: 2048
+  
+  gpu_memory_utilization:
+    enabled: true
+    min: 0.85
+    max: 0.95
+    step: 0.05
+  
+  kv_cache_dtype:
+    enabled: true
+    options: ["auto", "fp8"]
+  
+  max_num_seqs:
+    enabled: true
+    min: 32
+    max: 256
+    step: 32
+
+# Static parameters (applied to all trials)
+static_parameters:
+  tensor_parallel_size: 1  # Use 1 GPU per trial
+  max_model_len: 16384

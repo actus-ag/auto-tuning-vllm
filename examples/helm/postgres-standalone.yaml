@@ -1,0 +1,135 @@
+---
+# PostgreSQL StatefulSet - Standalone deployment
+# Usage: kubectl apply -f postgres-standalone.yaml
+# Make sure to set KUBECONFIG and create namespace first:
+#   export KUBECONFIG=/home/thibrahi/kubeconfigs/psap-dgx-8h100-kubeconfig
+#   kubectl create namespace llm-d-trials
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgresql-secret
+  namespace: llm-d-trials
+type: Opaque
+data:
+  postgres-user: cG9zdGdyZXM=  # base64 encoded "postgres"
+  postgres-password: cG9zdGdyZXM=  # base64 encoded "postgres" - CHANGE THIS IN PRODUCTION!
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql
+  namespace: llm-d-trials
+  labels:
+    app: postgresql
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5432
+    targetPort: postgresql
+    protocol: TCP
+    name: postgresql
+  selector:
+    app: postgresql
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql-headless
+  namespace: llm-d-trials
+  labels:
+    app: postgresql
+spec:
+  clusterIP: None
+  ports:
+  - port: 5432
+    targetPort: postgresql
+    protocol: TCP
+    name: postgresql
+  selector:
+    app: postgresql
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgresql
+  namespace: llm-d-trials
+  labels:
+    app: postgresql
+spec:
+  serviceName: postgresql-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgresql
+  template:
+    metadata:
+      labels:
+        app: postgresql
+    spec:
+      containers:
+      - name: postgresql
+        image: postgres:15
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: postgresql
+          containerPort: 5432
+          protocol: TCP
+        env:
+        - name: POSTGRES_DB
+          value: "postgres"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgresql-secret
+              key: postgres-user
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgresql-secret
+              key: postgres-password
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        volumeMounts:
+        - name: postgresql-data
+          mountPath: /var/lib/postgresql/data
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+  volumeClaimTemplates:
+  - metadata:
+      name: postgresql-data
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      storageClassName: nfs-storage
+      resources:
+        requests:
+          storage: 20Gi

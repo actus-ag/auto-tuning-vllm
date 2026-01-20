@@ -1,0 +1,126 @@
+# Example study configuration for Helm-based vLLM deployment
+# This demonstrates using Helm backend for Kubernetes-native optimization
+# Configured for llm-d-modelservice with prefix-aware inference scheduler
+
+study:
+  prefix: "llm-d-prefix-aware-test"
+  # Using PostgreSQL database with port-forwarding
+  # REQUIRED: Run this command in a separate terminal before starting optimization:
+  #   kubectl port-forward -n llm-d-trials svc/postgresql 5432:5432
+  # Default credentials: postgres/postgres (from postgresql-secret)
+  # The optuna database will be created automatically if it doesn't exist
+  database_url: "postgresql://postgres:postgres@localhost:5432/optuna"
+
+# Execution backend configuration
+execution:
+  backend: "helm"
+  helm:
+    # REQUIRED: Specify chart type explicitly
+    # Using llm-d-modelservice chart for prefix-aware scheduler support
+    chart_type: "llm-d-modelservice"
+    
+    # Deploy full stack (infra, gaie, modelservice) for prefix-aware routing
+    deploy_full_stack: true
+    release_name_postfix: "kv-events"  # Used for gaie and infra release names
+    
+    # Infra chart configuration
+    infra_chart_repo: "https://llm-d-incubation.github.io/llm-d-infra/"
+    infra_chart_name: "llm-d-infra"
+    infra_chart_version: "v1.3.4"
+    
+    # Gaie chart configuration
+    gaie_chart_version: "v1.2.0"
+    # gaie_values_template: "path/to/gaie-kv-events/values.yaml"  # Optional
+    
+    # Use llm-d-modelservice chart from repository
+    chart_repo: "https://llm-d-incubation.github.io/llm-d-modelservice/"
+    chart_name: "llm-d-modelservice"
+    chart_version: "v0.3.17"  # Latest available version
+    
+    namespace: "llm-d-trials"  # Kubernetes namespace for deployments
+    benchmark_image: "ghcr.io/vllm-project/guidellm:v0.5.1"  # Container image for benchmark Jobs
+    kubeconfig: "/home/thibrahi/kubeconfigs/psap-dgx-8h100-kubeconfig"  # Custom kubeconfig path
+
+optimization:
+  preset: "high_throughput"  # Optimize for maximum throughput
+  sampler: "tpe"  # Tree-structured Parzen Estimator
+  n_trials: 20
+  # Note: Helm backend does not support parallel trials - max_concurrent_trials is automatically set to 1
+  # max_concurrent_trials: 1  # Helm backend only supports sequential trials
+
+benchmark:
+  benchmark_type: "guidellm"
+  model: "Qwen/Qwen3-0.6B"  # Small model for testing
+  max_seconds: 300
+  dataset: null  # Use synthetic data
+  prompt_tokens: 1000
+  output_tokens: 1000
+  
+  tunables:
+    rate:
+      enabled: true
+      min: 10
+      max: 50
+      step: 10
+
+logging:
+  # Using PostgreSQL for logging (same database as study)
+  # Uses same port-forward as study database
+  database_url: "postgresql://postgres:postgres@localhost:5432/optuna"
+  log_level: "INFO"
+
+parameters:
+  # Prefix caching - KEY for prefix-aware scheduler
+  # Boolean parameter - tests both True and False
+  enable_prefix_caching:
+    enabled: true
+    options: [True, False]
+  
+  # Scheduler configuration for prefix-aware scheduling
+  # Note: scheduler_cls may need to be set in static_parameters depending on vLLM version
+  # Check vLLM documentation for exact scheduler class name
+  
+  # Other scheduler parameters
+  max_num_batched_tokens:
+    enabled: true
+    min: 2048
+    max: 16384
+    step: 2048
+  
+  scheduling_policy:
+    enabled: true
+    options: ["fcfs", "priority"]
+  
+  # Cache parameters that work well with prefix caching
+  gpu_memory_utilization:
+    enabled: true
+    min: 0.85
+    max: 0.95
+    step: 0.05
+  
+  kv_cache_dtype:
+    enabled: true
+    options: ["auto", "fp8"]
+  
+  max_num_seqs:
+    enabled: true
+    min: 32
+    max: 256
+    step: 32
+  
+  max_seq_len_to_capture:
+    enabled: true
+    # Important for prefix caching - determines max cached prefix length
+    options: [4096, 8192, 16384]
+
+# Static parameters (applied to all trials)
+static_parameters:
+  tensor_parallel_size: 1  # Use 1 GPU per trial
+  max_model_len: 16384
+  # Note: If your vLLM version supports PrefixAwareScheduler, you can set:
+  # scheduler_cls: "vllm.core.scheduler.PrefixAwareScheduler"
+  # Otherwise, prefix caching will work with the default scheduler
+
+# Static environment variables
+static_environment_variables:
+  VLLM_LOGGING_LEVEL: "INFO"

@@ -1,0 +1,41 @@
+---
+# PostgreSQL Test Pod for Helm deployments
+# This pod can be used to test PostgreSQL connectivity when deployed via Helm
+# Usage: kubectl apply -f postgres-test-pod-helm.yaml
+# Note: Update the secret name and service name based on your Helm release name
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: postgres-test-pod
+  namespace: llm-d-trials
+  labels:
+    app: postgres-test
+spec:
+  containers:
+  - name: postgres-client
+    image: postgres:15
+    command: ["/bin/bash"]
+    args: ["-c", "sleep infinity"]
+    env:
+    # Update this service name based on your Helm release name
+    # Format: <release-name>-vllm-server-postgresql
+    - name: PGHOST
+      value: postgresql-vllm-server-postgresql.llm-d-trials.svc.cluster.local
+    - name: PGPORT
+      value: "5432"
+    - name: PGDATABASE
+      value: postgres
+    - name: PGUSER
+      valueFrom:
+        secretKeyRef:
+          # Update this secret name based on your Helm release name
+          # Format: <release-name>-vllm-server-postgresql-secret
+          name: postgresql-vllm-server-postgresql-secret
+          key: postgres-user
+    - name: PGPASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: postgresql-vllm-server-postgresql-secret
+          key: postgres-password
+  restartPolicy: Never

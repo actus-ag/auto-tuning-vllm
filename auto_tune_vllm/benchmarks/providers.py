@@ -455,6 +455,191 @@ class GuideLLMBenchmark(BenchmarkProvider):
             raise RuntimeError(f"Invalid benchmark data structure: {e}")
 
 
+class MLPerfBenchmark(BenchmarkProvider):
+    """MLPerf harness benchmark provider implementation."""
+
+    def start_benchmark(
+        self, model_url: str, config: BenchmarkConfig
+    ) -> subprocess.Popen:
+        """
+        Start MLPerf harness benchmark subprocess (non-blocking).
+        
+        Returns:
+            Popen process handle for polling by caller
+        """
+        self._logger.info(f"Starting MLPerf benchmark for {config.model}")
+
+        # Create results file path directly in permanent location
+        self._results_file = self._get_results_file_path()
+
+        # Build MLPerf command
+        cmd = self._build_mlperf_command(model_url, config, self._results_file)
+        
+        # Validate basic inputs
+        if not (
+            model_url.startswith("http://") or model_url.startswith("https://")
+        ):
+            raise ValueError(
+                f"Invalid model_url: {model_url!r} (expected http/https)"
+            )
+
+        # Validate required MLPerf fields
+        if config.scenario is None:
+            raise ValueError("MLPerf scenario must be specified (Offline or Server)")
+        if config.dataset_path is None:
+            raise ValueError("MLPerf dataset_path must be specified")
+        if config.lg_model_name is None:
+            raise ValueError("MLPerf lg_model_name must be specified")
+        if config.num_samples is None:
+            raise ValueError("MLPerf num_samples must be specified")
+
+        # Run MLPerf harness
+        self._logger.info(f"Running: {' '.join(cmd)}")
+        self._logger.info(f"Results will be saved to: {self._results_file}")
+        
+        # Use Popen so we can terminate if vLLM dies
+        # start_new_session=True puts it in its own process group for clean
+        # termination
+        env = os.environ.copy()
+
+        self._process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+            start_new_session=True
+        )
+        
+        # Store PID and PGID immediately for cleanup, even if process handle is lost
+        self._process_pid = self._process.pid
+        try:
+            self._process_pgid = os.getpgid(self._process_pid)
+            self._logger.debug(
+                f"Started MLPerf process {self._process_pid} "
+                f"in process group {self._process_pgid}"
+            )
+        except (OSError, ProcessLookupError):
+            self._logger.warning(
+                f"Failed to get process group for MLPerf process "
+                f"{self._process_pid}"
+            )
+            self._process_pgid = None
+        
+        return self._process
+
+    def parse_results(self) -> Dict[str, Any]:
+        """
+        Parse MLPerf harness benchmark results from output file.
+        
+        Returns:
+            Dictionary with benchmark metrics
+        """
+        results_file = self._results_file
+        
+        if not os.path.exists(results_file):
+            raise RuntimeError(f"MLPerf results file not found: {results_file}")
+        
+        try:
+            with open(results_file) as f:
+                data = json.load(f)
+        except json.JSONDecodeError as e:
+            raise RuntimeError(f"Invalid JSON in results file: {e}")
+
+        # Placeholder: Return raw JSON data for now
+        # Actual parsing will be implemented separately
+        self._logger.warning(
+            "MLPerf results parsing not yet implemented. Returning raw JSON data."
+        )
+        return data
+
+    def _get_results_file_path(self) -> str:
+        """
+        Get the permanent results file path, creating directory structure if needed.
+        """
+        if self._trial_context is None:
+            # Fallback to temporary file if no trial context
+            self._logger.warning("No trial context set, using temporary file")
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", delete=False
+            ) as f:
+                return f.name
+
+        try:
+            # Create directory structure:
+            # /tmp/auto-tune-vllm-local-run/logs/{study_name}/benchmark_results/
+            study_name = self._trial_context["study_name"]
+            trial_id = self._trial_context["trial_id"]
+
+            # Use /tmp as base directory for consistency with existing log structure
+            base_dir = Path("/tmp/auto-tune-vllm-local-run/logs")
+            benchmark_dir = base_dir / study_name / "benchmark_results"
+
+            # Create directory if it doesn't exist
+            benchmark_dir.mkdir(parents=True, exist_ok=True)
+
+            # Create permanent results file with trial-specific name
+            permanent_file = benchmark_dir / f"{trial_id}_benchmark_results.json"
+
+            return str(permanent_file)
+
+        except Exception as e:
+            self._logger.warning(
+                f"Failed to create permanent results path: {e}, using temporary file"
+            )
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", delete=False
+            ) as f:
+                return f.name
+
+    def _build_mlperf_command(
+        self, model_url: str, config: BenchmarkConfig, results_file: str
+    ) -> list[str]:
+        """Build MLPerf harness command arguments."""
+        cmd = [
+            "python",
+            "harness_main.py",
+            "--model",
+            config.model,
+            "--dataset-path",
+            config.dataset_path,
+            "--scenario",
+            config.scenario,
+            "--test-mode",
+            config.test_mode,
+            "--lg-model-name",
+            config.lg_model_name,
+            "--num-samples",
+            str(config.num_samples),
+            "--api-server-url",
+            model_url,
+        ]
+
+        # Add optional parameters
+        if config.output_dir:
+            cmd.extend(["--output-dir", config.output_dir])
+        if config.mlflow_experiment_name:
+            cmd.extend(["--mlflow-experiment-name", config.mlflow_experiment_name])
+        if config.mlflow_host:
+            cmd.extend(["--mlflow-host", config.mlflow_host])
+
+        # Scenario-specific parameters
+        if config.scenario == "Offline":
+            if config.batch_size is None:
+                raise ValueError("batch_size must be specified for Offline scenario")
+            cmd.extend(["--batch-size", str(config.batch_size)])
+        elif config.scenario == "Server":
+            if config.server_target_qps is None:
+                raise ValueError(
+                    "server_target_qps must be specified for Server scenario"
+                )
+            cmd.extend(["--server-target-qps", str(config.server_target_qps)])
+            if config.server_coalesce_queries:
+                cmd.append("--server-coalesce-queries")
+
+        return cmd
+
+
 class CustomBenchmarkTemplate(BenchmarkProvider):
     """Template for implementing custom benchmark providers."""
 
@@ -514,6 +699,7 @@ class CustomBenchmarkTemplate(BenchmarkProvider):
 # Registry for dynamic benchmark provider loading (for reference/documentation)
 BENCHMARK_PROVIDERS = {
     "guidellm": GuideLLMBenchmark,
+    "mlperf": MLPerfBenchmark,
     "custom_template": CustomBenchmarkTemplate,
 }
 

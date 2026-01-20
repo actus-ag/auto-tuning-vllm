@@ -21,11 +21,21 @@ For a detailed starter guide, see the [Quick Start Guide](docs/quick_start.md).
 
 ### Installation
 
+#### For Local/Ray Execution
 ```bash
 git clone https://github.com/openshift-psap/auto-tuning-vllm.git
 cd auto-tuning-vllm
-pip install -e .
+pip install -e .[local]
 ```
+
+#### For Helm-based Kubernetes Execution (Remote vLLM)
+```bash
+git clone https://github.com/openshift-psap/auto-tuning-vllm.git
+cd auto-tuning-vllm
+pip install -e .[helm]
+```
+
+**Note**: For Helm deployments, vLLM and benchmarks run remotely in Kubernetes, so they don't need to be installed on the controller.
 
 ### Basic Usage
 

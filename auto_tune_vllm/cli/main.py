@@ -2,11 +2,17 @@
 
 import logging
 import shutil
+import signal
 import sys
 from pathlib import Path
 from typing import Optional
 
-import ray
+try:
+    import ray
+    RAY_AVAILABLE = True
+except ImportError:
+    RAY_AVAILABLE = False
+    ray = None
 import typer
 from rich.console import Console
 from rich.logging import RichHandler
@@ -116,7 +122,7 @@ def optimize_command(
         "ray",
         "--backend",
         "-b",
-        help="Execution backend: 'ray' (only supported option)",
+        help="Execution backend: 'ray', 'helm', or 'k8s'",
     ),
     n_trials: Optional[int] = typer.Option(
         None, "--trials", "-n", help="Number of trials (overrides config)"
@@ -146,31 +152,53 @@ def optimize_command(
     conda_env: Optional[str] = typer.Option(
         None, "--conda-env", help="Conda environment name for Ray workers"
     ),
+    helm_chart_path: Optional[str] = typer.Option(
+        None, "--helm-chart-path", help="Path to local Helm chart (for Helm backend)"
+    ),
+    helm_chart_repo: Optional[str] = typer.Option(
+        None, "--helm-chart-repo", help="Helm chart repository URL (for Helm backend)"
+    ),
+    helm_chart_name: Optional[str] = typer.Option(
+        None, "--helm-chart-name", help="Helm chart name from repository (for Helm backend)"
+    ),
+    helm_chart_version: Optional[str] = typer.Option(
+        None, "--helm-chart-version", help="Helm chart version (for Helm backend)"
+    ),
+    k8s_namespace: Optional[str] = typer.Option(
+        None, "--k8s-namespace", help="Kubernetes namespace for deployments (Helm or k8s backend)"
+    ),
+    kubeconfig: Optional[str] = typer.Option(
+        None, "--kubeconfig", help="Path to kubeconfig file (for Helm or k8s backend)"
+    ),
+    override: bool = typer.Option(
+        False, "--override", help="Delete existing study before creating a new one"
+    ),
 ):
     """Run optimization study."""
     setup_logging(verbose)
 
-    # Validate Python environment options (exactly one should be specified)
-    python_env_options = [python_executable, venv_path, conda_env]
-    specified_options = [opt for opt in python_env_options if opt is not None]
+    # Validate Python environment options (only required for Ray backend)
+    if backend.lower() == "ray":
+        python_env_options = [python_executable, venv_path, conda_env]
+        specified_options = [opt for opt in python_env_options if opt is not None]
 
-    if len(specified_options) == 0:
-        console.print(
-            "[bold red]"
-            "Error: At least one Python environment option must be specified"
-            "[/bold red]"
-        )
-        console.print("Choose one of: --python-executable, --venv-path, or --conda-env")
-        raise typer.Exit(1)
+        if len(specified_options) == 0:
+            console.print(
+                "[bold red]"
+                "Error: At least one Python environment option must be specified for Ray backend"
+                "[/bold red]"
+            )
+            console.print("Choose one of: --python-executable, --venv-path, or --conda-env")
+            raise typer.Exit(1)
 
-    if len(specified_options) > 1:
-        console.print(
-            "[bold red]"
-            "Error: Only one Python environment option can be specified at a time"
-            "[/bold red]"
-        )
-        console.print("Choose one of: --python-executable, --venv-path, or --conda-env")
-        raise typer.Exit(1)
+        if len(specified_options) > 1:
+            console.print(
+                "[bold red]"
+                "Error: Only one Python environment option can be specified at a time"
+                "[/bold red]"
+            )
+            console.print("Choose one of: --python-executable, --venv-path, or --conda-env")
+            raise typer.Exit(1)
 
     console.print("[bold green]Starting auto-tune-vllm optimization[/bold green]")
     console.print(f"Configuration: {config}")
@@ -200,6 +228,111 @@ def optimize_command(
         study_config = StudyConfig.from_file(config)
         console.print(f"Loaded study: {study_config.study_name}")
 
+        # Handle --override flag: delete existing study before creating new one
+        if override:
+            console.print(f"[yellow]Override flag set: deleting existing study '{study_config.study_name}' if it exists[/yellow]")
+            try:
+                from ..core.storage.utils import get_storage, StorageType
+                import optuna
+                import sqlite3
+                
+                storage, storage_type = get_storage(study_config, resume_study=False)
+                
+                if storage_type == StorageType.SQLITE:
+                    # For SQLite: delete the study from the database file or delete the entire file
+                    if study_config.storage_file:
+                        storage_path = Path(study_config.storage_file)
+                        if storage_path.exists():
+                            # Connect to SQLite and check/delete study
+                            conn = sqlite3.connect(str(storage_path))
+                            try:
+                                cursor = conn.cursor()
+                                
+                                # Get study ID first
+                                cursor.execute("SELECT study_id FROM studies WHERE study_name = ?", (study_config.study_name,))
+                                study_row = cursor.fetchone()
+                                
+                                if study_row:
+                                    study_id = study_row[0]
+                                    
+                                    # Delete trial-related data
+                                    cursor.execute("DELETE FROM trial_intermediate_values WHERE trial_id IN (SELECT trial_id FROM trials WHERE study_id = ?)", (study_id,))
+                                    cursor.execute("DELETE FROM trial_system_attributes WHERE trial_id IN (SELECT trial_id FROM trials WHERE study_id = ?)", (study_id,))
+                                    cursor.execute("DELETE FROM trial_user_attributes WHERE trial_id IN (SELECT trial_id FROM trials WHERE study_id = ?)", (study_id,))
+                                    cursor.execute("DELETE FROM trial_values WHERE trial_id IN (SELECT trial_id FROM trials WHERE study_id = ?)", (study_id,))
+                                    cursor.execute("DELETE FROM trial_params WHERE trial_id IN (SELECT trial_id FROM trials WHERE study_id = ?)", (study_id,))
+                                    cursor.execute("DELETE FROM trials WHERE study_id = ?", (study_id,))
+                                    cursor.execute("DELETE FROM studies WHERE study_id = ?", (study_id,))
+                                    
+                                    conn.commit()
+                                    
+                                    # Verify deletion
+                                    cursor.execute("SELECT study_id FROM studies WHERE study_name = ?", (study_config.study_name,))
+                                    if cursor.fetchone() is None:
+                                        console.print(f"[green]✅ Deleted existing study '{study_config.study_name}' from SQLite storage[/green]")
+                                    else:
+                                        console.print(f"[yellow]Warning: Study deletion may not have completed successfully[/yellow]")
+                                else:
+                                    # Study not found in database, but file exists - delete the file to clear any cached state
+                                    conn.close()
+                                    storage_path.unlink()
+                                    console.print(f"[green]✅ Deleted SQLite database file to clear cached study state[/green]")
+                            finally:
+                                if conn:
+                                    conn.close()
+                        else:
+                            console.print(f"[yellow]Storage file does not exist, nothing to delete[/yellow]")
+                    else:
+                        # In-memory storage - nothing to delete
+                        console.print(f"[yellow]Using in-memory storage, nothing to delete[/yellow]")
+                elif storage_type == StorageType.POSTGRESQL:
+                    # For PostgreSQL: use clear_study_data function
+                    if study_config.database_url:
+                            result = clear_study_data(
+                                study_config.study_name,
+                                study_config.database_url,
+                                clear_logs=False
+                            )
+                            if result["success"]:
+                                console.print(f"[green]✅ Deleted existing study '{study_config.study_name}' from PostgreSQL storage[/green]")
+                            elif result.get("error") and "not found" in result["error"].lower():
+                                console.print(f"[yellow]Study '{study_config.study_name}' not found in PostgreSQL storage, nothing to delete[/yellow]")
+                            else:
+                                console.print(f"[yellow]Warning: {result.get('error', 'Unknown error')}[/yellow]")
+                    else:
+                        console.print(f"[yellow]No database URL configured, nothing to delete[/yellow]")
+                
+                # Also clean up Helm releases associated with this study (for Helm backend)
+                if backend.lower() == "helm":
+                    namespace = k8s_namespace or (study_config.helm_config.namespace if study_config.helm_config else "default")
+                    try:
+                        import subprocess
+                        # List all Helm releases in namespace
+                        result = subprocess.run(
+                            ["helm", "list", "-n", namespace, "-q"],
+                            capture_output=True,
+                            text=True,
+                        )
+                        if result.returncode == 0:
+                            releases = result.stdout.strip().split("\n") if result.stdout.strip() else []
+                            # Find releases that start with study name
+                            study_releases = [r for r in releases if r.startswith(study_config.study_name)]
+                            if study_releases:
+                                console.print(f"[yellow]Cleaning up {len(study_releases)} Helm release(s) for study[/yellow]")
+                                for release in study_releases:
+                                    subprocess.run(
+                                        ["helm", "uninstall", release, "-n", namespace],
+                                        capture_output=True,
+                                        text=True,
+                                    )
+                                console.print(f"[green]✅ Cleaned up Helm releases[/green]")
+                    except Exception as e:
+                        console.print(f"[yellow]Warning: Could not clean up Helm releases: {e}[/yellow]")
+                
+            except Exception as e:
+                console.print(f"[yellow]Warning: Could not delete existing study: {e}[/yellow]")
+                console.print("[yellow]Continuing with study creation...[/yellow]")
+
         # Save config file to study folder
         save_config_to_study_folder(config, study_config)
 
@@ -222,20 +355,81 @@ def optimize_command(
                     "Ray auto-start disabled - requires existing cluster"
                     "[/yellow]"
                 )
+        elif backend.lower() == "helm":
+            from ..execution.backends import HelmExecutionBackend
+            
+            # Build Helm config from CLI args or study config
+            helm_config = {}
+            if study_config.helm_config:
+                helm_config = {
+                    "chart_path": study_config.helm_config.chart_path,
+                    "chart_repo": study_config.helm_config.chart_repo,
+                    "chart_name": study_config.helm_config.chart_name,
+                    "chart_version": study_config.helm_config.chart_version,
+                    "chart_type": study_config.helm_config.chart_type,  # REQUIRED
+                    "values_template": study_config.helm_config.values_template,
+                    "benchmark_image": study_config.helm_config.benchmark_image,
+                    "deploy_full_stack": study_config.helm_config.deploy_full_stack,
+                    "release_name_postfix": study_config.helm_config.release_name_postfix,
+                    "infra_chart_repo": study_config.helm_config.infra_chart_repo,
+                    "infra_chart_name": study_config.helm_config.infra_chart_name,
+                    "infra_chart_version": study_config.helm_config.infra_chart_version,
+                    "gaie_chart_version": study_config.helm_config.gaie_chart_version,
+                    "gaie_values_template": study_config.helm_config.gaie_values_template,
+                }
+            
+            # Override with CLI args if provided
+            if helm_chart_path:
+                helm_config["chart_path"] = helm_chart_path
+            if helm_chart_repo:
+                helm_config["chart_repo"] = helm_chart_repo
+            if helm_chart_name:
+                helm_config["chart_name"] = helm_chart_name
+            if helm_chart_version:
+                helm_config["chart_version"] = helm_chart_version
+            
+            namespace = k8s_namespace or (study_config.helm_config.namespace if study_config.helm_config else "default")
+            kubeconfig_path = kubeconfig or (study_config.helm_config.kubeconfig if study_config.helm_config else None)
+            
+            execution_backend = HelmExecutionBackend(
+                study_name=study_config.study_name,
+                helm_config=helm_config,
+                namespace=namespace,
+                kubeconfig=kubeconfig_path,
+            )
+            console.print("[blue]Using Helm-based Kubernetes execution[/blue]")
+            console.print(f"[blue]Namespace: {namespace}[/blue]")
+        elif backend.lower() == "k8s" or backend.lower() == "kubernetes":
+            from ..execution.backends import KubernetesExecutionBackend
+            
+            # Get Kubernetes config from study config
+            k8s_config = {}
+            if study_config.k8s_config:
+                k8s_config = {
+                    "vllm_image": study_config.k8s_config.vllm_image,
+                    "benchmark_image": study_config.k8s_config.benchmark_image,
+                    "service_type": study_config.k8s_config.service_type,
+                    "service_port": study_config.k8s_config.service_port,
+                    "resource_requests": study_config.k8s_config.resource_requests,
+                    "resource_limits": study_config.k8s_config.resource_limits,
+                }
+            
+            namespace = k8s_namespace or (study_config.k8s_config.namespace if study_config.k8s_config else "default")
+            kubeconfig_path = kubeconfig or (study_config.k8s_config.kubeconfig if study_config.k8s_config else None)
+            
+            execution_backend = KubernetesExecutionBackend(
+                study_name=study_config.study_name,
+                k8s_config=k8s_config,
+                namespace=namespace,
+                kubeconfig=kubeconfig_path,
+            )
+            console.print("[blue]Using Kubernetes Deployment/Pod execution[/blue]")
+            console.print(f"[blue]Namespace: {namespace}[/blue]")
         else:
             console.print(
                 "[bold red]"
-                "Error: Local execution backend is not supported in this version."
+                f"Error: Unknown backend '{backend}'. Supported backends: 'ray', 'helm', 'k8s'"
                 "[/bold red]"
-            )
-            console.print(
-                "[bold red]Only Ray distributed execution is available.[/bold red]"
-            )
-            console.print(
-                "[blue]Use --backend ray (default) or set up a Ray cluster.[/blue]"
-            )
-            console.print(
-                "[blue]See docs/ray_cluster_setup.md for Ray setup instructions.[/blue]"
             )
             raise typer.Exit(1)
 
@@ -244,10 +438,36 @@ def optimize_command(
         final_max_concurrent_trials = (
             max_concurrent_trials or study_config.optimization.max_concurrent_trials
         )
+        
+        # Helm and Kubernetes backends do not support parallel trials
+        if backend.lower() in ("helm", "k8s", "kubernetes"):
+            backend_name = "Helm" if backend.lower() == "helm" else "Kubernetes"
+            if final_max_concurrent_trials is not None and final_max_concurrent_trials > 1:
+                console.print(
+                    "[bold red]"
+                    f"❌ {backend_name} backend does not support parallel trials. "
+                    f"max_concurrent_trials must be 1 for {backend_name} backend."
+                    "[/bold red]"
+                )
+                console.print(
+                    "[yellow]"
+                    f"Note: Each {backend_name} trial creates a full Kubernetes deployment. "
+                    "Parallel trials are not supported to avoid resource conflicts."
+                    "[/yellow]"
+                )
+                raise typer.Exit(1)
+            # Force to 1 for Kubernetes backends
+            final_max_concurrent_trials = 1
+            console.print(
+                "[yellow]"
+                f"⚠️  {backend_name} backend: Using max_concurrent_trials=1 (parallel trials not supported)"
+                "[/yellow]"
+            )
+        
         if final_max_concurrent_trials is None:
             console.print(
                 "[bold red]"
-                "❌ --max-concurrent-trials is required "
+                "❌ --max_concurrent_trials is required "
                 "(or set optimization.max_concurrent_trials in the config)"
                 "[/bold red]"
             )
@@ -373,6 +593,41 @@ def run_optimization_sync(
     controller = StudyController.create_from_config(
         backend, config, create_db=create_db
     )
+    
+    # Store controller reference for signal handler
+    _cleanup_controller = controller
+    
+    def signal_handler(signum, frame):
+        """Handle SIGINT/SIGTERM to ensure cleanup."""
+        # #region agent log
+        import json
+        import time
+        with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"signal-handler","hypothesisId":"SIGNAL","location":"main.py:signal_handler","message":"Signal received","data":{"signum":signum},"timestamp":int(time.time()*1000)})+"\n")
+        # #endregion
+        
+        logger.warning(
+            f"Signal {signum} received. Initiating cleanup..."
+        )
+        console.print(
+            f"\n[yellow]⚠️  Signal {signum} received. "
+            "Cleaning up active trials...[/yellow]"
+        )
+        
+        try:
+            # Force cleanup via backend
+            if hasattr(controller, 'backend') and controller.backend:
+                controller.backend.cleanup_all_trials()
+                controller.backend.shutdown()
+        except Exception as e:
+            logger.error(f"Error during signal handler cleanup: {e}", exc_info=True)
+        
+        # Re-raise KeyboardInterrupt to trigger normal cleanup flow
+        raise KeyboardInterrupt(f"Signal {signum} received")
+    
+    # Register signal handlers
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
 
     # Display study name prominently in the CLI
     console.print(f"[bold cyan]🔍 Study Name: {config.study_name}[/bold cyan]")
@@ -412,6 +667,12 @@ def run_optimization_sync(
                 "\n[yellow]⚠️  Interrupt signal received. "
                 "Cleaning up active trials...[/yellow]"
             )
+            # Ensure cleanup happens even if exception is caught
+            try:
+                if hasattr(controller, 'backend') and controller.backend:
+                    controller.backend.cleanup_all_trials()
+            except Exception as cleanup_e:
+                logger.error(f"Error during cleanup: {cleanup_e}", exc_info=True)
             raise
         except Exception:
             # Mark task as failed and re-raise
@@ -923,6 +1184,32 @@ def resume_command(
         final_max_concurrent_trials = (
             max_concurrent_trials or study_config.optimization.max_concurrent_trials
         )
+        
+        # Helm and Kubernetes backends do not support parallel trials
+        if backend.lower() in ("helm", "k8s", "kubernetes"):
+            backend_name = "Helm" if backend.lower() == "helm" else "Kubernetes"
+            if final_max_concurrent_trials is not None and final_max_concurrent_trials > 1:
+                console.print(
+                    "[bold red]"
+                    f"❌ {backend_name} backend does not support parallel trials. "
+                    f"max_concurrent_trials must be 1 for {backend_name} backend."
+                    "[/bold red]"
+                )
+                console.print(
+                    "[yellow]"
+                    f"Note: Each {backend_name} trial creates a full Kubernetes deployment. "
+                    "Parallel trials are not supported to avoid resource conflicts."
+                    "[/yellow]"
+                )
+                raise typer.Exit(1)
+            # Force to 1 for Kubernetes backends
+            final_max_concurrent_trials = 1
+            console.print(
+                "[yellow]"
+                f"⚠️  {backend_name} backend: Using max_concurrent_trials=1 (parallel trials not supported)"
+                "[/yellow]"
+            )
+        
         if n_trials or n_total_trials:  # Only required if we will run new trials
             if final_max_concurrent_trials is None:
                 console.print(

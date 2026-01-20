@@ -1,0 +1,40 @@
+{{- if .Values.postgresql.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vllm-server.fullname" . }}-postgresql
+  namespace: {{ .Values.postgresql.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "vllm-server.labels" . | nindent 4 }}
+    component: postgresql
+spec:
+  type: {{ .Values.postgresql.service.type | default "ClusterIP" }}
+  ports:
+  - port: {{ .Values.postgresql.service.port | default 5432 }}
+    targetPort: postgresql
+    protocol: TCP
+    name: postgresql
+  selector:
+    {{- include "vllm-server.selectorLabels" . | nindent 4 }}
+    component: postgresql
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vllm-server.fullname" . }}-postgresql-headless
+  namespace: {{ .Values.postgresql.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "vllm-server.labels" . | nindent 4 }}
+    component: postgresql
+spec:
+  clusterIP: None
+  ports:
+  - port: {{ .Values.postgresql.service.port | default 5432 }}
+    targetPort: postgresql
+    protocol: TCP
+    name: postgresql
+  selector:
+    {{- include "vllm-server.selectorLabels" . | nindent 4 }}
+    component: postgresql
+{{- end }}

@@ -1,0 +1,18 @@
+{{- if .Values.postgresql.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "vllm-server.fullname" . }}-postgresql-config
+  namespace: {{ .Values.postgresql.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "vllm-server.labels" . | nindent 4 }}
+    component: postgresql
+data:
+  {{- if .Values.postgresql.config }}
+  {{- range $key, $value := .Values.postgresql.config }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+  {{- else }}
+  # Default PostgreSQL configuration
+  {{- end }}
+{{- end }}

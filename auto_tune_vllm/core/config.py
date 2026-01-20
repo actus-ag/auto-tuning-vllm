@@ -265,6 +265,46 @@ class BaselineConfig:
 
 
 @dataclass
+class HelmConfig:
+    """Configuration for Helm-based vLLM deployment."""
+
+    chart_path: Optional[str] = None  # Path to local Helm chart
+    chart_repo: Optional[str] = None  # Helm chart repository URL
+    chart_name: Optional[str] = None  # Chart name from repository
+    chart_version: Optional[str] = None  # Chart version
+    chart_type: Optional[str] = None  # Chart type: "llm-d-modelservice" or "vllm" (REQUIRED)
+    namespace: str = "default"  # Kubernetes namespace
+    kubeconfig: Optional[str] = None  # Path to kubeconfig file
+    values_template: Optional[str] = None  # Path to values template file
+    release_name_template: Optional[str] = None  # Custom release name pattern
+    benchmark_image: Optional[str] = None  # Container image for benchmark Jobs
+    # Full stack deployment for prefix-aware routing
+    deploy_full_stack: bool = False  # Deploy infra, gaie, and modelservice
+    release_name_postfix: str = "kv-events"  # Postfix for infra/gaie release names
+    # Infra chart configuration
+    infra_chart_repo: Optional[str] = None  # Infra chart repository URL
+    infra_chart_name: Optional[str] = None  # Infra chart name
+    infra_chart_version: Optional[str] = None  # Infra chart version
+    # Gaie chart configuration
+    gaie_chart_version: Optional[str] = None  # Gaie chart version
+    gaie_values_template: Optional[str] = None  # Path to gaie values template
+
+
+@dataclass
+class KubernetesConfig:
+    """Configuration for Kubernetes Deployment/Pod-based vLLM deployment."""
+
+    namespace: str = "default"  # Kubernetes namespace
+    kubeconfig: Optional[str] = None  # Path to kubeconfig file
+    vllm_image: Optional[str] = None  # vLLM container image (default: auto-detect from vLLM version)
+    benchmark_image: Optional[str] = None  # Container image for benchmark Jobs
+    service_type: str = "ClusterIP"  # Kubernetes Service type: ClusterIP, NodePort, or LoadBalancer
+    service_port: int = 8000  # Service port for vLLM server
+    resource_requests: Optional[Dict[str, str]] = None  # Resource requests (e.g., {"nvidia.com/gpu": "1"})
+    resource_limits: Optional[Dict[str, str]] = None  # Resource limits (e.g., {"nvidia.com/gpu": "1", "memory": "32Gi"})
+
+
+@dataclass
 class StudyConfig:
     """Complete study configuration."""
 
@@ -276,12 +316,18 @@ class StudyConfig:
     benchmark_tunables: Dict[str, ParameterConfig] = field(
         default_factory=dict
     )  # Benchmark tunable parameters
+    gaie_parameters: Dict[str, ParameterConfig] = field(
+        default_factory=dict
+    )  # GAIE chart tunable parameters
     static_environment_variables: Dict[str, str] = field(
         default_factory=dict
     )  # Static environment variables
     static_parameters: Dict[str, Any] = field(
         default_factory=dict
     )  # Static vLLM parameters for all trials
+    static_gaie_parameters: Dict[str, Any] = field(
+        default_factory=dict
+    )  # Static GAIE parameters for all trials
     baseline: Optional[BaselineConfig] = None  # Baseline configuration
     logging_config: Optional[Dict[str, Any]] = None
     storage_file: Optional[str] = (
@@ -294,6 +340,8 @@ class StudyConfig:
         False  # Flag to indicate explicit name usage (affects load_if_exists behavior)
     )
     constraints: list[Constraint] = field(default_factory=list)
+    helm_config: Optional[HelmConfig] = None  # Helm deployment configuration
+    k8s_config: Optional[KubernetesConfig] = None  # Kubernetes deployment configuration
 
     @classmethod
     def from_file(
@@ -479,6 +527,68 @@ class ConfigValidator:
                 validated_param = self._build_parameter_config(param_name, param_config)
 
             validated_params[param_name] = validated_param
+
+        # Validate and build GAIE parameter configs
+        validated_gaie_params = {}
+        for param_name, param_config in raw_config.get("gaie_parameters", {}).items():
+            if not param_config.get("enabled", True):
+                continue
+
+            # GAIE parameters follow the same structure as vLLM parameters
+            # Check if this is an environment variable
+            is_env_var = param_config.get("env_var", False)
+
+            if is_env_var:
+                if (
+                    "range" in param_config
+                    or "min" in param_config
+                    or "max" in param_config
+                    or "step" in param_config
+                ):
+                    raise ValueError(
+                        f"GAIE environment parameter '{param_name}' cannot use "
+                        f"range configurations. Only list options are allowed."
+                    )
+
+                if "options" not in param_config:
+                    raise ValueError(
+                        f"GAIE environment parameter '{param_name}' "
+                        f"must specify options as a list"
+                    )
+
+                validated_param = EnvironmentParameter(
+                    name=param_name,
+                    enabled=param_config.get("enabled", True),
+                    options=param_config["options"],
+                    data_type=param_config.get("data_type", "str"),
+                    description=param_config.get(
+                        "description", f"GAIE environment variable {param_name}"
+                    ),
+                )
+            else:
+                # Build parameter config based on schema type
+                validated_param = self._build_parameter_config(param_name, param_config)
+
+            validated_gaie_params[param_name] = validated_param
+
+        # Validate static GAIE parameters (simple key-value pairs)
+        static_gaie_params = {}
+        raw_static_gaie_parameters = raw_config.get("static_gaie_parameters")
+        if raw_static_gaie_parameters is None:
+            raw_static_gaie_parameters = {}
+        elif not isinstance(raw_static_gaie_parameters, dict):
+            raise TypeError(
+                "Static GAIE parameters must be provided as a mapping of "
+                "parameter names to simple values."
+            )
+
+        for param_name, param_value in raw_static_gaie_parameters.items():
+            if not isinstance(param_value, (str, int, float, bool)):
+                raise ValueError(
+                    f"Static GAIE parameter '{param_name}' must be a simple value "
+                    f"(string, number, or boolean), got {type(param_value)}"
+                )
+            static_gaie_params[param_name] = param_value
 
         # Validate static environment variables (simple key-value pairs)
         static_env_vars = {}
@@ -697,6 +807,21 @@ class ConfigValidator:
                     raise TypeError(msg)
                 constraints = [Constraint(expression=expr) for expr in constraint_data]
 
+        # Handle Helm configuration
+        helm_config = None
+        k8s_config = None
+        if "execution" in raw_config:
+            execution_data = raw_config["execution"]
+            if isinstance(execution_data, dict):
+                if "helm" in execution_data:
+                    helm_data = execution_data["helm"]
+                    if isinstance(helm_data, dict):
+                        helm_config = HelmConfig(**helm_data)
+                if "k8s" in execution_data or "kubernetes" in execution_data:
+                    k8s_data = execution_data.get("k8s") or execution_data.get("kubernetes")
+                    if isinstance(k8s_data, dict):
+                        k8s_config = KubernetesConfig(**k8s_data)
+
         return StudyConfig(
             study_name=study_name,
             database_url=database_url,
@@ -704,14 +829,18 @@ class ConfigValidator:
             benchmark=benchmark,
             parameters=validated_params,
             benchmark_tunables=validated_benchmark_tunables,
+            gaie_parameters=validated_gaie_params,
             static_environment_variables=static_env_vars,
             static_parameters=static_params,
+            static_gaie_parameters=static_gaie_params,
             baseline=baseline_config,
             logging_config=raw_config.get("logging"),
             storage_file=storage_file,
             study_prefix=study_prefix,
             use_explicit_name=use_explicit_name,
             constraints=constraints,
+            helm_config=helm_config,
+            k8s_config=k8s_config,
         )
 
     def _infer_parameter_type(self, parameter_config: dict[str, Any]):

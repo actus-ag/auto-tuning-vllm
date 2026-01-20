@@ -1,0 +1,110 @@
+{{- if .Values.decode.create }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vllm-server.fullname" . }}-decode
+  labels:
+    {{- include "vllm-server.labels" . | nindent 4 }}
+    component: decode
+spec:
+  replicas: {{ .Values.decode.replicas }}
+  selector:
+    matchLabels:
+      {{- include "vllm-server.selectorLabels" . | nindent 6 }}
+      component: decode
+  template:
+    metadata:
+      labels:
+        {{- include "vllm-server.selectorLabels" . | nindent 8 }}
+        component: decode
+    spec:
+      containers:
+        {{- range .Values.decode.containers }}
+        - name: {{ .name }}
+          image: {{ .image }}
+          {{- if .imagePullPolicy }}
+          imagePullPolicy: {{ .imagePullPolicy }}
+          {{- end }}
+          {{- $modelCommand := default "imageDefault" .modelCommand }}
+          {{- if eq $modelCommand "vllmServe" }}
+          command: ["vllm", "serve"]
+          args:
+            - --port
+            - "8000"
+            - --host
+            - "0.0.0.0"
+            {{- if .args }}
+            {{- range .args }}
+            - {{ . | quote }}
+            {{- end }}
+            {{- end }}
+          {{- else if eq $modelCommand "imageDefault" }}
+          args:
+            - --port
+            - "8000"
+            - --host
+            - "0.0.0.0"
+            {{- if .args }}
+            {{- range .args }}
+            - {{ . | quote }}
+            {{- end }}
+            {{- end }}
+          {{- else if eq $modelCommand "custom" }}
+          {{- if not .command }}
+          {{- fail "When modelCommand is 'custom', a command must be provided" }}
+          {{- end }}
+          command:
+            {{- toYaml .command | nindent 12 }}
+          {{- if .args }}
+          args:
+            {{- toYaml .args | nindent 12 }}
+          {{- end }}
+          {{- else }}
+          {{- fail "modelCommand must be one of: vllmServe, imageDefault, custom" }}
+          {{- end }}
+          {{- if .env }}
+          env:
+            {{- range .env }}
+            - name: {{ .name }}
+              {{- if .value }}
+              value: {{ .value | quote }}
+              {{- else if .valueFrom }}
+              valueFrom:
+                {{- toYaml .valueFrom | nindent 16 }}
+              {{- end }}
+            {{- end }}
+          {{- end }}
+          ports:
+            {{- range .ports }}
+            - containerPort: {{ .containerPort }}
+              name: {{ .name }}
+              protocol: {{ .protocol }}
+            {{- end }}
+          {{- if .resources }}
+          resources:
+            {{- toYaml .resources | nindent 12 }}
+          {{- end }}
+          {{- if .livenessProbe }}
+          livenessProbe:
+            {{- toYaml .livenessProbe | nindent 12 }}
+          {{- end }}
+          {{- if .readinessProbe }}
+          readinessProbe:
+            {{- toYaml .readinessProbe | nindent 12 }}
+          {{- end }}
+          {{- if .startupProbe }}
+          startupProbe:
+            {{- toYaml .startupProbe | nindent 12 }}
+          {{- end }}
+          {{- if .volumeMounts }}
+          volumeMounts:
+            {{- toYaml .volumeMounts | nindent 12 }}
+          {{- end }}
+        {{- end }}
+      {{- if .Values.decode.volumes }}
+      volumes:
+        {{- toYaml .Values.decode.volumes | nindent 8 }}
+      {{- end }}
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 130
+{{- end }}

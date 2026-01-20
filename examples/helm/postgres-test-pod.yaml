@@ -1,0 +1,37 @@
+---
+# PostgreSQL Test Pod
+# This pod can be used to test PostgreSQL connectivity and functionality
+# Usage: kubectl apply -f postgres-test-pod.yaml
+# Then: kubectl exec -it postgres-test-pod -n llm-d-trials -- /bin/bash
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: postgres-test-pod
+  namespace: llm-d-trials
+  labels:
+    app: postgres-test
+spec:
+  containers:
+  - name: postgres-client
+    image: postgres:15
+    command: ["/bin/bash"]
+    args: ["-c", "sleep infinity"]
+    env:
+    - name: PGHOST
+      value: postgresql.llm-d-trials.svc.cluster.local
+    - name: PGPORT
+      value: "5432"
+    - name: PGDATABASE
+      value: postgres
+    - name: PGUSER
+      valueFrom:
+        secretKeyRef:
+          name: postgresql-secret
+          key: postgres-user
+    - name: PGPASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: postgresql-secret
+          key: postgres-password
+  restartPolicy: Never

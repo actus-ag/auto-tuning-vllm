@@ -368,7 +368,7 @@ tunables:
 tunables:
   some_flag:
     enabled: true
-    # Will test both True and False
+    options: [True, False]  # Must explicitly specify options for boolean parameters
 ```
 
 #### Important Rules
@@ -448,6 +448,78 @@ benchmark:
   tunables: {}  # Empty - no tunables when using real dataset
 ```
 
+### MLPerf Harness Benchmark
+
+MLPerf harness is supported as an alternative benchmark provider. It supports both Offline and Server scenarios with tunable parameters for Server scenario.
+
+#### MLPerf Configuration Fields
+
+**Required Constants:**
+- `benchmark_type`: Must be `"mlperf"`
+- `model`: Model identifier (e.g., `"RedHatAI/Meta-Llama-3.1-8B-Instruct-FP8"`)
+- `scenario`: MLPerf scenario type - `"Offline"` or `"Server"`
+- `dataset_path`: Path to dataset file (e.g., `"cnn_eval.json"`)
+- `lg_model_name`: LoadGen model name (e.g., `"llama3_1-8b"`)
+- `num_samples`: Number of samples to process
+
+**Optional Constants:**
+- `batch_size`: Batch size for Offline scenario (required for Offline, ignored for Server)
+- `output_dir`: Output directory for results
+- `mlflow_experiment_name`: MLflow experiment name
+- `mlflow_host`: MLflow host address
+- `test_mode`: Test mode (default: `"performance"`)
+
+**Tunables (for Server scenario only):**
+- `server_target_qps`: Target queries per second (float range)
+- `server_coalesce_queries`: Coalesce queries flag (boolean)
+
+#### Example: MLPerf Server Scenario with Tunables
+
+```yaml
+benchmark:
+  benchmark_type: "mlperf"
+  model: "RedHatAI/Meta-Llama-3.1-8B-Instruct-FP8"
+  scenario: "Server"
+  dataset_path: "cnn_eval.json"
+  lg_model_name: "llama3_1-8b"
+  num_samples: 13368
+  output_dir: "LLAMA3_1-8B-SERVER"
+  mlflow_experiment_name: "testing-stuff"
+  mlflow_host: "150.239.115.202"
+  test_mode: "performance"
+  
+  tunables:
+    server_target_qps:
+      enabled: true
+      min: 10.0
+      max: 50.0
+      step: 5.0
+    server_coalesce_queries:
+      enabled: true
+      options: [True, False]  # Boolean - must explicitly specify options
+```
+
+#### Example: MLPerf Offline Scenario
+
+```yaml
+benchmark:
+  benchmark_type: "mlperf"
+  model: "RedHatAI/Meta-Llama-3.1-8B-Instruct-FP8"
+  scenario: "Offline"
+  dataset_path: "cnn_eval.json"
+  lg_model_name: "llama3_1-8b"
+  batch_size: 13368
+  num_samples: 13368
+  output_dir: "LLAMA3_1-8B-OFFLINE"
+  mlflow_experiment_name: "testing-stuff"
+  mlflow_host: "150.239.115.202"
+  test_mode: "performance"
+  
+  tunables: {}  # No tunables for Offline scenario
+```
+
+**Note:** Server scenario tunables (`server_target_qps` and `server_coalesce_queries`) are only applicable to Server scenario and should not be specified for Offline scenario.
+
 ## Logging Configuration
 
 The `logging` section controls where and how detailed logging information is recorded. This section is optional - if omitted, logs are only displayed on the console.
@@ -512,7 +584,15 @@ The optimizer will test each value in the options list.
 Boolean parameters test both true and false values. Used for feature flags and enable/disable options.
 
 #### Configuration Fields:
-No additional configuration needed - automatically tests both `true` and `false` values.
+- **`options`** (array, required): Must be `[True, False]` or `[False, True]` to explicitly specify the boolean values to test.
+
+**Example:**
+```yaml
+parameters:
+  some_flag:
+    enabled: true
+    options: [True, False]
+```
 
 ### Available Parameters
 

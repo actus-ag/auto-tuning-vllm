@@ -489,6 +489,23 @@ class StudyController:
             raise ValueError(msg)
         if max_concurrent_trials < 1:
             raise ValueError("--max-concurrent-trials must be >= 1")
+        
+        # Helm backend does not support parallel trials
+        from ..execution.backends import HelmExecutionBackend
+        if isinstance(self.backend, HelmExecutionBackend):
+            if max_concurrent_trials > 1:
+                raise ValueError(
+                    "Helm backend does not support parallel trials. "
+                    "max_concurrent_trials must be 1 for Helm backend. "
+                    "Each Helm trial creates a full Kubernetes deployment, "
+                    "and parallel trials are not supported to avoid resource conflicts."
+                )
+            # Force to 1 for Helm backend
+            max_concurrent_trials = 1
+            logger.warning(
+                "Helm backend: max_concurrent_trials forced to 1 "
+                "(parallel trials not supported)"
+            )
 
         max_concurrent_str = (
             max_concurrent_trials
@@ -845,6 +862,13 @@ class StudyController:
             benchmark_tunable_values
         )
 
+        # Generate GAIE parameter values
+        gaie_parameters = self.config.static_gaie_parameters.copy()
+        for param_name, param_config in self.config.gaie_parameters.items():
+            if param_config.enabled:
+                value = param_config.generate_optuna_suggest(trial)
+                gaie_parameters[param_name] = value
+
         return TrialConfig(
             study_name=self.config.study_name,
             trial_id=f"trial_{trial.number}",
@@ -852,6 +876,8 @@ class StudyController:
             trial_type="optimization",
             parameters=parameters,
             parameter_configs=self.config.parameters,
+            gaie_parameters=gaie_parameters,
+            gaie_parameter_configs=self.config.gaie_parameters,
             static_environment_variables=self.config.static_environment_variables,
             benchmark_config=trial_benchmark_config,
             optimization_config=self.config.optimization,
@@ -920,6 +946,12 @@ class StudyController:
 
             if exec_info.worker_node_id:
                 trial.set_user_attr("worker_node_id", exec_info.worker_node_id)
+            
+            # Store Helm deployment information
+            if exec_info.helm_release_name:
+                trial.set_user_attr("helm_release_name", exec_info.helm_release_name)
+            if exec_info.benchmark_job_name:
+                trial.set_user_attr("benchmark_job_name", exec_info.benchmark_job_name)
 
         # Store error information for failed trials
         if not result.success:

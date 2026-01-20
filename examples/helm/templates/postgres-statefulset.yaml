@@ -1,0 +1,95 @@
+{{- if .Values.postgresql.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "vllm-server.fullname" . }}-postgresql
+  namespace: {{ .Values.postgresql.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "vllm-server.labels" . | nindent 4 }}
+    component: postgresql
+spec:
+  serviceName: {{ include "vllm-server.fullname" . }}-postgresql-headless
+  replicas: {{ .Values.postgresql.replicas | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "vllm-server.selectorLabels" . | nindent 6 }}
+      component: postgresql
+  template:
+    metadata:
+      labels:
+        {{- include "vllm-server.selectorLabels" . | nindent 8 }}
+        component: postgresql
+    spec:
+      containers:
+      - name: postgresql
+        image: {{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}
+        imagePullPolicy: {{ .Values.postgresql.image.pullPolicy | default "IfNotPresent" }}
+        ports:
+        - name: postgresql
+          containerPort: 5432
+          protocol: TCP
+        env:
+        - name: POSTGRES_DB
+          value: {{ .Values.postgresql.database | quote }}
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "vllm-server.fullname" . }}-postgresql-secret
+              key: postgres-user
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "vllm-server.fullname" . }}-postgresql-secret
+              key: postgres-password
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        {{- if .Values.postgresql.env }}
+        {{- range .Values.postgresql.env }}
+        - name: {{ .name }}
+          {{- if .value }}
+          value: {{ .value | quote }}
+          {{- else if .valueFrom }}
+          valueFrom:
+            {{- toYaml .valueFrom | nindent 12 }}
+          {{- end }}
+        {{- end }}
+        {{- end }}
+        volumeMounts:
+        - name: postgresql-data
+          mountPath: /var/lib/postgresql/data
+        {{- if .Values.postgresql.volumeMounts }}
+        {{- toYaml .Values.postgresql.volumeMounts | nindent 8 }}
+        {{- end }}
+        resources:
+          {{- toYaml .Values.postgresql.resources | nindent 10 }}
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+  volumeClaimTemplates:
+  - metadata:
+      name: postgresql-data
+    spec:
+      accessModes:
+      - {{ .Values.postgresql.persistence.accessMode | default "ReadWriteOnce" }}
+      storageClassName: {{ .Values.postgresql.persistence.storageClass | quote }}
+      resources:
+        requests:
+          storage: {{ .Values.postgresql.persistence.size | default "20Gi" }}
+{{- end }}

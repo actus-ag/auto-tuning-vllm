@@ -11,9 +11,16 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-import ray
+try:
+    import ray
+    RAY_AVAILABLE = True
+except ImportError:
+    RAY_AVAILABLE = False
+    ray = None
+
+import yaml
 
 from ..core.trial import TrialConfig, TrialResult
 
@@ -22,21 +29,27 @@ logger = logging.getLogger(__name__)
 
 # Simple Ray actor to hold cancellation state that can be modified externally
 
-@ray.remote
-class CancellationFlag:
-    """Lightweight Ray actor to hold mutable cancellation state."""
+if RAY_AVAILABLE:
+    @ray.remote
+    class CancellationFlag:
+        """Lightweight Ray actor to hold mutable cancellation state."""
 
-    def __init__(self):
-        self.cancelled = False
+        def __init__(self):
+            self.cancelled = False
 
-    def request_cancellation(self):
-        """Set cancellation flag to True."""
-        self.cancelled = True
-        return True
+        def request_cancellation(self):
+            """Set cancellation flag to True."""
+            self.cancelled = True
+            return True
 
-    def is_cancelled(self):
-        """Check if cancellation was requested."""
-        return self.cancelled
+        def is_cancelled(self):
+            """Check if cancellation was requested."""
+            return self.cancelled
+else:
+    # Dummy class when Ray is not available
+    class CancellationFlag:
+        """Dummy cancellation flag when Ray is not available."""
+        pass
 
 @dataclass
 class JobHandle:
@@ -651,3 +664,981 @@ class LocalExecutionBackend(ExecutionBackend):
         """Shutdown thread pool executor."""
         self.executor.shutdown(wait=True)
         logger.info("Shutdown local execution backend")
+
+
+class HelmExecutionBackend(ExecutionBackend):
+    """Helm-based Kubernetes execution backend."""
+
+    def __init__(
+        self,
+        helm_config: Optional[Dict[str, Any]] = None,
+        namespace: str = "default",
+        kubeconfig: Optional[str] = None,
+        study_name: Optional[str] = None,
+    ):
+        """Initialize Helm execution backend.
+        
+        Args:
+            helm_config: Helm configuration dictionary
+            namespace: Kubernetes namespace
+            kubeconfig: Path to kubeconfig file
+            study_name: Study name/prefix for cleanup purposes
+        """
+        self.helm_config = helm_config or {}
+        self.namespace = namespace
+        self.kubeconfig = kubeconfig
+        self.study_name = study_name  # Store study name for cleanup
+        
+        # Track active trials: trial_id -> (release_name, future, executor)
+        self.active_trials: Dict[str, Tuple[str, Any, Any]] = {}
+        
+        # Validate Helm CLI is available
+        if shutil.which("helm") is None:
+            raise RuntimeError(
+                "Helm CLI not found. Please install Helm: "
+                "https://helm.sh/docs/intro/install/"
+            )
+        
+        # Validate Kubernetes access
+        self._validate_kubernetes_access()
+        
+        # Ensure namespace exists
+        self._ensure_namespace_exists()
+        
+        logger.info(f"Initialized Helm execution backend (namespace: {self.namespace})")
+
+    def _validate_kubernetes_access(self):
+        """Validate Kubernetes cluster access."""
+        try:
+            from kubernetes import client, config
+        except ImportError:
+            raise RuntimeError(
+                "kubernetes library not available. "
+                "Install with: pip install 'auto-tune-vllm[helm]'"
+            )
+        
+        try:
+            if self.kubeconfig:
+                config.load_kube_config(config_file=self.kubeconfig)
+            else:
+                try:
+                    config.load_incluster_config()
+                except config.ConfigException:
+                    config.load_kube_config()
+            
+            # Test API access
+            v1 = client.CoreV1Api()
+            v1.list_namespace()  # Note: method is list_namespace (singular), not list_namespaces
+            logger.info("Kubernetes cluster access validated")
+        except Exception as e:
+            raise RuntimeError(f"Failed to access Kubernetes cluster: {e}")
+
+    def _ensure_namespace_exists(self):
+        """Ensure Kubernetes namespace exists, create if it doesn't."""
+        try:
+            from kubernetes import client, config
+        except ImportError:
+            return  # Already validated in _validate_kubernetes_access
+        
+        try:
+            if self.kubeconfig:
+                config.load_kube_config(config_file=self.kubeconfig)
+            else:
+                try:
+                    config.load_incluster_config()
+                except config.ConfigException:
+                    config.load_kube_config()
+            
+            v1 = client.CoreV1Api()
+            
+            # Check if namespace exists
+            try:
+                v1.read_namespace(name=self.namespace)
+                logger.debug(f"Namespace {self.namespace} already exists")
+            except Exception:
+                # Namespace doesn't exist, create it
+                logger.info(f"Creating namespace: {self.namespace}")
+                namespace_body = client.V1Namespace(
+                    metadata=client.V1ObjectMeta(name=self.namespace)
+                )
+                v1.create_namespace(body=namespace_body)
+                logger.info(f"Created namespace: {self.namespace}")
+        except Exception as e:
+            logger.warning(f"Failed to ensure namespace exists: {e}")
+            # Don't fail - namespace might be created by cluster admin
+
+    def submit_trial(self, trial_config: TrialConfig) -> JobHandle:
+        """Submit trial for Helm-based execution.
+        
+        Args:
+            trial_config: Trial configuration
+            
+        Returns:
+            JobHandle with release name as backend_job_id
+        """
+        from .helm_utils import (
+            generate_helm_values,
+            sanitize_release_name,
+        )
+        from .trial_controller import HelmTrialController
+        import concurrent.futures
+        
+        # Generate release name
+        release_name = sanitize_release_name(
+            f"{trial_config.study_name}-{trial_config.trial_id}"
+        )
+        
+        # Generate Helm values
+        helm_values = generate_helm_values(trial_config, self.helm_config)
+        
+        # Create values file
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            yaml.dump(helm_values, f)
+            values_file = f.name
+        
+        try:
+            # For prefix-aware routing, deploy full stack: infra, gaie, modelservice
+            # Use release name postfix for gaie (e.g., "kv-events")
+            # NOTE: infra and gaie are shared across all trials, so only deploy once
+            release_name_postfix = self.helm_config.get("release_name_postfix", "kv-events")
+            
+            # Deploy infra chart first (only if not already deployed)
+            infra_release_name = f"infra-{release_name_postfix}"
+            if self.helm_config.get("deploy_full_stack", False):
+                # Check if infra release already exists
+                result = subprocess.run(
+                    ["helm", "list", "-n", self.namespace, "-q"],
+                    capture_output=True,
+                    text=True,
+                )
+                infra_exists = infra_release_name in result.stdout
+                
+                if not infra_exists:
+                    logger.info(f"Deploying full stack: infra, gaie, modelservice")
+                    
+                    # 1. Deploy infra chart
+                    infra_chart_repo = self.helm_config.get("infra_chart_repo", "https://llm-d-incubation.github.io/llm-d-infra/")
+                    infra_chart_name = self.helm_config.get("infra_chart_name", "llm-d-infra")
+                    infra_chart_version = self.helm_config.get("infra_chart_version", "v1.3.4")
+                    
+                    infra_repo_name = f"helm-repo-infra-{abs(hash(infra_chart_repo)) % 10000}"
+                    result = subprocess.run(
+                        ["helm", "repo", "list"],
+                        capture_output=True,
+                        text=True,
+                    )
+                    if infra_repo_name not in result.stdout:
+                        subprocess.run(
+                            ["helm", "repo", "add", infra_repo_name, infra_chart_repo],
+                            check=True,
+                            capture_output=True,
+                        )
+                    subprocess.run(
+                        ["helm", "repo", "update", infra_repo_name],
+                        check=False,
+                        capture_output=True,
+                    )
+                    
+                    infra_cmd = [
+                        "helm", "install", infra_release_name,
+                        f"{infra_repo_name}/{infra_chart_name}",
+                        "--version", infra_chart_version,
+                        "--namespace", self.namespace,
+                        "--wait", "--timeout", "10m",
+                    ]
+                    logger.info(f"Installing infra Helm release: {infra_release_name}")
+                    result = subprocess.run(infra_cmd, check=True, capture_output=True, text=True)
+                    logger.info(f"Infra Helm release installed: {result.stdout}")
+                else:
+                    logger.info(f"Infra Helm release {infra_release_name} already exists, skipping")
+                
+                # 2. Deploy/upgrade gaie chart (depends on infra, redeploy for each trial with trial-specific parameters)
+                gaie_release_name = f"gaie-{release_name_postfix}"
+                gaie_chart_ref = "oci://registry.k8s.io/gateway-api-inference-extension/charts/inferencepool"
+                gaie_chart_version = self.helm_config.get("gaie_chart_version", "v1.2.0")
+                
+                # Generate GAIE values from trial configuration
+                from .helm_utils import generate_gaie_values
+                import tempfile
+                gaie_values = generate_gaie_values(trial_config, self.helm_config)
+                
+                # Write GAIE values to temp file
+                with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+                    yaml.dump(gaie_values, f, default_flow_style=False, allow_unicode=True)
+                    gaie_values_file = f.name
+                
+                # Check if GAIE release already exists
+                result = subprocess.run(
+                    ["helm", "list", "-n", self.namespace, "-q"],
+                    capture_output=True,
+                    text=True,
+                )
+                gaie_exists = gaie_release_name in result.stdout
+                
+                if gaie_exists:
+                    # Upgrade existing release with trial-specific parameters
+                    gaie_cmd = [
+                        "helm", "upgrade", gaie_release_name,
+                        gaie_chart_ref,
+                        "--version", gaie_chart_version,
+                        "--namespace", self.namespace,
+                        "--values", gaie_values_file,
+                        "--wait", "--timeout", "10m",
+                    ]
+                    logger.info(f"Upgrading gaie Helm release: {gaie_release_name} with trial-specific parameters")
+                else:
+                    # Install new release
+                    gaie_cmd = [
+                        "helm", "install", gaie_release_name,
+                        gaie_chart_ref,
+                        "--version", gaie_chart_version,
+                        "--namespace", self.namespace,
+                        "--values", gaie_values_file,
+                        "--wait", "--timeout", "10m",
+                    ]
+                    logger.info(f"Installing gaie Helm release: {gaie_release_name} with trial-specific parameters")
+                
+                result = subprocess.run(gaie_cmd, check=True, capture_output=True, text=True)
+                logger.info(f"Gaie Helm release {'upgraded' if gaie_exists else 'installed'}: {result.stdout}")
+                
+                # Clean up temp file
+                import os
+                if os.path.exists(gaie_values_file):
+                    os.unlink(gaie_values_file)
+            
+            # 3. Deploy modelservice chart (depends on infra and gaie)
+            # Update helm_values to include GAIE_RELEASE_NAME_POSTFIX
+            if "decode" not in helm_values:
+                helm_values["decode"] = {}
+            if "containers" not in helm_values["decode"]:
+                helm_values["decode"]["containers"] = [{}]
+            container = helm_values["decode"]["containers"][0]
+            if "env" not in container:
+                container["env"] = []
+            
+            # Add GAIE_RELEASE_NAME_POSTFIX to environment variables
+            env_dict = {env["name"]: env.get("value", "") for env in container["env"] if "name" in env}
+            env_dict["GAIE_RELEASE_NAME_POSTFIX"] = release_name_postfix
+            container["env"] = [{"name": k, "value": str(v)} for k, v in env_dict.items()]
+            
+            # Re-write values file with updated env vars
+            with open(values_file, "w") as f:
+                yaml.dump(helm_values, f)
+            
+            # Install modelservice Helm release
+            helm_cmd = [
+                "helm",
+                "install",
+                release_name,
+            ]
+            
+            # Add chart source
+            if self.helm_config.get("chart_path"):
+                helm_cmd.append(self.helm_config["chart_path"])
+            elif self.helm_config.get("chart_repo") and self.helm_config.get("chart_name"):
+                repo_url = self.helm_config["chart_repo"]
+                chart_name = self.helm_config["chart_name"]
+                chart_version = self.helm_config.get("chart_version")
+                
+                # Add repo if needed (check if exists first)
+                repo_name = f"helm-repo-{abs(hash(repo_url)) % 10000}"
+                # Check if repo already exists
+                result = subprocess.run(
+                    ["helm", "repo", "list"],
+                    capture_output=True,
+                    text=True,
+                )
+                repo_exists = repo_name in result.stdout
+                
+                if not repo_exists:
+                    subprocess.run(
+                        ["helm", "repo", "add", repo_name, repo_url],
+                        check=True,
+                        capture_output=True,
+                    )
+                # Update repo to ensure we have latest charts
+                subprocess.run(
+                    ["helm", "repo", "update", repo_name],
+                    check=False,  # Don't fail if update fails
+                    capture_output=True,
+                )
+                
+                chart_ref = f"{repo_name}/{chart_name}"
+                helm_cmd.append(chart_ref)
+                if chart_version:
+                    helm_cmd.extend(["--version", chart_version])
+            else:
+                raise ValueError(
+                    "Helm config must specify either chart_path or (chart_repo + chart_name)"
+                )
+            
+            helm_cmd.extend([
+                "--namespace", self.namespace,
+                "--values", values_file,
+                "--wait",  # Wait for resources to be ready
+                "--timeout", "10m",
+            ])
+            
+            logger.info(f"Installing Helm release: {release_name}")
+            result = subprocess.run(
+                helm_cmd,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            logger.info(f"Helm release installed: {result.stdout}")
+            
+            # Create Service for llm-d-modelservice if chart doesn't create one
+            # The chart may not create a Service, so we create one to target the decode pods
+            try:
+                from kubernetes import client, config
+                from kubernetes.client.rest import ApiException
+                try:
+                    config.load_incluster_config()
+                except config.ConfigException:
+                    config.load_kube_config()
+                
+                v1 = client.CoreV1Api()
+                apps_v1 = client.AppsV1Api()
+                
+                # Check if service already exists
+                service_name = f"{release_name}-llm-d-modelservice-decode"
+                try:
+                    v1.read_namespaced_service(name=service_name, namespace=self.namespace)
+                    logger.info(f"Service {service_name} already exists")
+                except ApiException as e:
+                    if e.status == 404:
+                        logger.debug(
+                            f"Kubernetes API: Service '{service_name}' in namespace '{self.namespace}' not found "
+                            f"(status={e.status}, reason={e.reason}). Will create it."
+                        )
+                        # Service doesn't exist, create it
+                        # Get deployment to find selector labels
+                        # Try different possible deployment name formats
+                        deployment_names = [
+                            f"{release_name}-llm-d-modelservice-decode",
+                            f"{release_name}-llm-d-m-decode",
+                            f"{release_name}-l-decode",  # llm-d-modelservice chart uses -l-decode suffix
+                            f"{release_name}-decode",  # Fallback pattern
+                        ]
+                        deployment = None
+                        deployment_name = None
+                        for dep_name in deployment_names:
+                            try:
+                                deployment = apps_v1.read_namespaced_deployment(
+                                    name=dep_name, namespace=self.namespace
+                                )
+                                deployment_name = dep_name
+                                logger.debug(f"Found deployment '{deployment_name}' for release '{release_name}'")
+                                break
+                            except ApiException as e:
+                                logger.debug(
+                                    f"Kubernetes API: Deployment '{dep_name}' in namespace '{self.namespace}' not found "
+                                    f"(status={e.status}, reason={e.reason}). Trying next name."
+                                )
+                                continue
+                        
+                        if deployment is None:
+                            # List all deployments and find one matching the release by label
+                            logger.debug(f"Listing all deployments in namespace '{self.namespace}' to find one for release '{release_name}'")
+                            deployments = apps_v1.list_namespaced_deployment(namespace=self.namespace)
+                            for dep in deployments.items:
+                                labels = dep.metadata.labels or {}
+                                instance_label = labels.get("app.kubernetes.io/instance")
+                                release_label = labels.get("release")
+                                # Match by instance label or release label, or by name prefix
+                                if (instance_label == release_name or 
+                                    release_label == release_name or
+                                    dep.metadata.name.startswith(release_name)):
+                                    # Prefer decode deployment over prefill
+                                    if "decode" in dep.metadata.name.lower():
+                                        deployment = dep
+                                        deployment_name = dep.metadata.name
+                                        logger.debug(f"Found deployment '{deployment_name}' by label/prefix matching")
+                                        break
+                                    elif deployment is None:
+                                        # Keep prefill as fallback if no decode found
+                                        deployment = dep
+                                        deployment_name = dep.metadata.name
+                                        logger.debug(f"Found deployment '{deployment_name}' by label/prefix matching (prefill, keeping as fallback)")
+                        
+                        if deployment is None:
+                            logger.error(f"Could not find deployment for release '{release_name}' in namespace '{self.namespace}'. Available deployments: {[d.metadata.name for d in apps_v1.list_namespaced_deployment(namespace=self.namespace).items]}")
+                            raise ApiException(status=404, reason="Deployment not found")
+                        
+                        try:
+                            # Get selector labels from deployment
+                            selector = deployment.spec.selector.match_labels
+                            
+                            # Get service port from values (default 8000)
+                            service_port = 8000
+                            target_port = 8200  # vLLM container port for prefix-aware routing
+                            
+                            # Create Service with shorter name to avoid DNS label length limits
+                            # Kubernetes DNS labels have a 63 character limit
+                            # Use a shorter service name
+                            short_service_name = f"{release_name[:40]}-svc" if len(release_name) > 40 else f"{release_name}-svc"
+                            # Ensure it doesn't exceed 63 chars total
+                            if len(short_service_name) > 63:
+                                short_service_name = f"{release_name[:55]}-svc"
+                            
+                            service = client.V1Service(
+                                metadata=client.V1ObjectMeta(
+                                    name=short_service_name,
+                                    labels={
+                                        "app.kubernetes.io/instance": release_name,
+                                        "app.kubernetes.io/managed-by": "auto-tune-vllm",
+                                    },
+                                ),
+                                spec=client.V1ServiceSpec(
+                                    type="ClusterIP",
+                                    selector=selector,
+                                    ports=[
+                                        client.V1ServicePort(
+                                            port=service_port,
+                                            target_port=target_port,
+                                            protocol="TCP",
+                                            name="http",
+                                        ),
+                                    ],
+                                ),
+                            )
+                            service_name = short_service_name  # Update service_name for logging
+                            v1.create_namespaced_service(namespace=self.namespace, body=service)
+                            logger.info(f"Created Service {service_name} for Helm release {release_name}")
+                        except ApiException as de:
+                            logger.warning(
+                                f"Kubernetes API error while creating Service '{service_name}' in namespace '{self.namespace}': "
+                                f"status={de.status}, reason={de.reason}, message={de.body if hasattr(de, 'body') else str(de)}. "
+                                f"Deployment: {deployment_name}"
+                            )
+                    else:
+                        logger.warning(
+                            f"Kubernetes API error while checking for Service '{service_name}' in namespace '{self.namespace}': "
+                            f"status={e.status}, reason={e.reason}, message={e.body if hasattr(e, 'body') else str(e)}"
+                        )
+            except Exception as e:
+                logger.warning(f"Could not create Service for {release_name}: {e}")
+            
+            # Create Helm trial controller and run in executor
+            benchmark_image = self.helm_config.get("benchmark_image")
+            controller = HelmTrialController(release_name, self.namespace, benchmark_image, self.helm_config)
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            future = executor.submit(controller.run_trial, trial_config)
+            
+            # Track trial
+            self.active_trials[trial_config.trial_id] = (release_name, future, executor)
+            
+            return JobHandle(trial_config.trial_id, release_name)
+            
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Helm install failed: {e.stderr}")
+            raise RuntimeError(f"Failed to install Helm release: {e.stderr}")
+        finally:
+            # Clean up values file
+            import os
+            if os.path.exists(values_file):
+                os.unlink(values_file)
+
+    def poll_trials(
+        self, job_handles: List[JobHandle]
+    ) -> Tuple[List[TrialResult], List[JobHandle]]:
+        """Poll for completed Helm trials.
+        
+        Args:
+            job_handles: List of job handles to poll
+            
+        Returns:
+            Tuple of (completed results, remaining handles)
+        """
+        if not job_handles:
+            return [], []
+        
+        completed_results = []
+        remaining_handles = []
+        
+        for handle in job_handles:
+            trial_id = handle.trial_id
+            if trial_id not in self.active_trials:
+                logger.warning(f"Trial {trial_id} not found in active trials")
+                remaining_handles.append(handle)
+                continue
+            
+            release_name, future, executor = self.active_trials[trial_id]
+            
+            # Check if future completed
+            if future.done():
+                try:
+                    result = future.result()
+                    completed_results.append(result)
+                    logger.info(f"Completed Helm trial {trial_id}")
+                    
+                    # Clean up
+                    executor.shutdown(wait=False)
+                    del self.active_trials[trial_id]
+                    
+                except Exception as e:
+                    logger.error(f"Trial {trial_id} failed: {e}")
+                    from ..core.trial import ExecutionInfo, TrialResult
+                    
+                    execution_info = ExecutionInfo()
+                    execution_info.helm_release_name = release_name
+                    
+                    error_result = TrialResult(
+                        trial_id=trial_id,
+                        objective_values=[],
+                        detailed_metrics={},
+                        execution_info=execution_info,
+                        success=False,
+                        error_message=str(e),
+                    )
+                    completed_results.append(error_result)
+                    executor.shutdown(wait=False)
+                    del self.active_trials[trial_id]
+            else:
+                remaining_handles.append(handle)
+        
+        return completed_results, remaining_handles
+
+    def cleanup_all_trials(self):
+        """Cleanup all active Helm releases and benchmark Jobs.
+        
+        This method:
+        1. Cleans up releases tracked in active_trials
+        2. Also searches for and uninstalls ALL Helm releases matching the study name pattern
+           (to catch releases from previous runs or orphaned releases)
+        """
+        # #region agent log
+        import json
+        import time
+        with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1263","message":"Starting cleanup_all_trials","data":{"active_trials_count":len(self.active_trials),"active_trials_keys":list(self.active_trials.keys()),"study_name":self.study_name},"timestamp":int(time.time()*1000)})+"\n")
+        # #endregion
+        
+        # Step 1: Clean up tracked active trials
+        if self.active_trials:
+            logger.info(f"Cleaning up {len(self.active_trials)} tracked active trial(s)")
+            # #region agent log
+            with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1275","message":"Cleaning up tracked active trials","data":{"count":len(self.active_trials)},"timestamp":int(time.time()*1000)})+"\n")
+            # #endregion
+            
+            for trial_id, (release_name, future, executor) in list(self.active_trials.items()):
+                try:
+                    # #region agent log
+                    with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1281","message":"Processing trial cleanup","data":{"trial_id":trial_id,"release_name":release_name},"timestamp":int(time.time()*1000)})+"\n")
+                    # #endregion
+                    
+                    # Shutdown executor
+                    if executor:
+                        executor.shutdown(wait=False)
+                        # #region agent log
+                        with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                            f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1287","message":"Executor shutdown","data":{"trial_id":trial_id},"timestamp":int(time.time()*1000)})+"\n")
+                        # #endregion
+                    
+                    # Uninstall Helm release
+                    logger.info(f"Uninstalling Helm release: {release_name}")
+                    # #region agent log
+                    with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1293","message":"Uninstalling Helm release","data":{"release_name":release_name,"namespace":self.namespace},"timestamp":int(time.time()*1000)})+"\n")
+                    # #endregion
+                    
+                    result = subprocess.run(
+                        ["helm", "uninstall", release_name, "--namespace", self.namespace],
+                        check=False,  # Don't fail if already deleted
+                        capture_output=True,
+                        text=True,
+                    )
+                    
+                    # #region agent log
+                    with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1301","message":"Helm uninstall result","data":{"release_name":release_name,"returncode":result.returncode,"stdout":result.stdout[:200] if result.stdout else "","stderr":result.stderr[:200] if result.stderr else ""},"timestamp":int(time.time()*1000)})+"\n")
+                    # #endregion
+                    
+                    if result.returncode != 0:
+                        logger.warning(
+                            f"Helm uninstall for {release_name} returned code {result.returncode}: "
+                            f"{result.stderr or result.stdout}"
+                        )
+                    else:
+                        logger.info(f"Successfully uninstalled Helm release: {release_name}")
+                    
+                except Exception as e:
+                    logger.error(f"Error cleaning up trial {trial_id}: {e}", exc_info=True)
+                    # #region agent log
+                    with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1313","message":"Error during cleanup","data":{"trial_id":trial_id,"error":str(e)},"timestamp":int(time.time()*1000)})+"\n")
+                    # #endregion
+            
+            self.active_trials.clear()
+        
+        # Step 2: Search for and uninstall ALL Helm releases matching study name pattern
+        # This catches orphaned releases from previous runs
+        if self.study_name:
+            logger.info(f"Searching for orphaned Helm releases matching study: {self.study_name}")
+            # #region agent log
+            with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1324","message":"Searching for orphaned releases","data":{"study_name":self.study_name},"timestamp":int(time.time()*1000)})+"\n")
+            # #endregion
+            
+            try:
+                # List all Helm releases in namespace
+                result = subprocess.run(
+                    ["helm", "list", "-n", self.namespace, "-q"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                
+                if result.returncode == 0 and result.stdout:
+                    releases = [r.strip() for r in result.stdout.strip().split("\n") if r.strip()]
+                    # Find releases that start with study name
+                    study_releases = [r for r in releases if r.startswith(self.study_name)]
+                    
+                    # #region agent log
+                    with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1338","message":"Found matching releases","data":{"total_releases":len(releases),"study_releases":study_releases},"timestamp":int(time.time()*1000)})+"\n")
+                    # #endregion
+                    
+                    if study_releases:
+                        logger.info(f"Found {len(study_releases)} orphaned Helm release(s) matching study name")
+                        for release in study_releases:
+                            try:
+                                logger.info(f"Uninstalling orphaned Helm release: {release}")
+                                # #region agent log
+                                with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                                    f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1346","message":"Uninstalling orphaned release","data":{"release_name":release},"timestamp":int(time.time()*1000)})+"\n")
+                                # #endregion
+                                
+                                uninstall_result = subprocess.run(
+                                    ["helm", "uninstall", release, "--namespace", self.namespace],
+                                    check=False,
+                                    capture_output=True,
+                                    text=True,
+                                )
+                                
+                                # #region agent log
+                                with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                                    f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1354","message":"Orphaned release uninstall result","data":{"release_name":release,"returncode":uninstall_result.returncode,"stdout":uninstall_result.stdout[:200] if uninstall_result.stdout else "","stderr":uninstall_result.stderr[:200] if uninstall_result.stderr else ""},"timestamp":int(time.time()*1000)})+"\n")
+                                # #endregion
+                                
+                                if uninstall_result.returncode == 0:
+                                    logger.info(f"Successfully uninstalled orphaned Helm release: {release}")
+                                else:
+                                    logger.warning(
+                                        f"Failed to uninstall orphaned release {release}: "
+                                        f"{uninstall_result.stderr or uninstall_result.stdout}"
+                                    )
+                            except Exception as e:
+                                logger.error(f"Error uninstalling orphaned release {release}: {e}", exc_info=True)
+                                # #region agent log
+                                with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                                    f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1366","message":"Error uninstalling orphaned release","data":{"release_name":release,"error":str(e)},"timestamp":int(time.time()*1000)})+"\n")
+                                # #endregion
+                    else:
+                        logger.debug(f"No orphaned Helm releases found matching study: {self.study_name}")
+                else:
+                    logger.debug(f"Could not list Helm releases: {result.stderr or result.stdout}")
+            except Exception as e:
+                logger.warning(f"Error searching for orphaned Helm releases: {e}", exc_info=True)
+                # #region agent log
+                with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1375","message":"Error searching for orphaned releases","data":{"error":str(e)},"timestamp":int(time.time()*1000)})+"\n")
+                # #endregion
+        
+        logger.info("Completed cleanup of all active trials and orphaned releases")
+        # #region agent log
+        with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1380","message":"Cleanup completed","data":{},"timestamp":int(time.time()*1000)})+"\n")
+        # #endregion
+
+    def shutdown(self):
+        """Shutdown Helm execution backend."""
+        self.cleanup_all_trials()
+        logger.info("Shutdown Helm execution backend")
+
+
+class KubernetesExecutionBackend(ExecutionBackend):
+    """Kubernetes Deployment/Pod-based execution backend (no Helm)."""
+
+    def __init__(
+        self,
+        k8s_config: Optional[Dict[str, Any]] = None,
+        namespace: str = "default",
+        kubeconfig: Optional[str] = None,
+        study_name: Optional[str] = None,
+    ):
+        """Initialize Kubernetes execution backend.
+        
+        Args:
+            k8s_config: Kubernetes configuration dictionary
+            namespace: Kubernetes namespace
+            kubeconfig: Path to kubeconfig file
+            study_name: Study name/prefix for cleanup purposes
+        """
+        self.k8s_config = k8s_config or {}
+        self.namespace = namespace
+        self.kubeconfig = kubeconfig
+        self.study_name = study_name
+        
+        # Track active trials: trial_id -> (deployment_name, service_name, future, executor)
+        self.active_trials: Dict[str, Tuple[str, str, Any, Any]] = {}
+        
+        # Validate Kubernetes access
+        self._validate_kubernetes_access()
+        
+        # Ensure namespace exists
+        self._ensure_namespace_exists()
+        
+        logger.info(f"Initialized Kubernetes execution backend (namespace: {self.namespace})")
+
+    def _validate_kubernetes_access(self):
+        """Validate Kubernetes cluster access."""
+        try:
+            from kubernetes import client, config
+        except ImportError:
+            raise RuntimeError(
+                "kubernetes library not available. "
+                "Install with: pip install 'auto-tune-vllm[helm]'"
+            )
+        
+        try:
+            if self.kubeconfig:
+                config.load_kube_config(config_file=self.kubeconfig)
+            else:
+                try:
+                    config.load_incluster_config()
+                except config.ConfigException:
+                    config.load_kube_config()
+            
+            # Test API access
+            v1 = client.CoreV1Api()
+            v1.list_namespace()
+            logger.info("Kubernetes cluster access validated")
+        except Exception as e:
+            raise RuntimeError(f"Failed to access Kubernetes cluster: {e}")
+
+    def _ensure_namespace_exists(self):
+        """Ensure Kubernetes namespace exists, create if it doesn't."""
+        try:
+            from kubernetes import client, config
+        except ImportError:
+            return
+        
+        try:
+            if self.kubeconfig:
+                config.load_kube_config(config_file=self.kubeconfig)
+            else:
+                try:
+                    config.load_incluster_config()
+                except config.ConfigException:
+                    config.load_kube_config()
+            
+            v1 = client.CoreV1Api()
+            
+            # Check if namespace exists
+            try:
+                v1.read_namespace(name=self.namespace)
+                logger.debug(f"Namespace {self.namespace} already exists")
+            except Exception:
+                # Namespace doesn't exist, create it
+                logger.info(f"Creating namespace: {self.namespace}")
+                namespace_body = client.V1Namespace(
+                    metadata=client.V1ObjectMeta(name=self.namespace)
+                )
+                v1.create_namespace(body=namespace_body)
+                logger.info(f"Created namespace: {self.namespace}")
+        except Exception as e:
+            logger.warning(f"Failed to ensure namespace exists: {e}")
+
+    def submit_trial(self, trial_config: TrialConfig) -> JobHandle:
+        """Submit trial for Kubernetes-based execution.
+        
+        Args:
+            trial_config: Trial configuration
+            
+        Returns:
+            JobHandle with deployment name as backend_job_id
+        """
+        from .k8s_utils import (
+            create_vllm_deployment,
+            create_vllm_service,
+            sanitize_k8s_name,
+        )
+        from .trial_controller import KubernetesTrialController
+        import concurrent.futures
+        
+        # Generate deployment and service names
+        base_name = sanitize_k8s_name(
+            f"{trial_config.study_name}-{trial_config.trial_id}"
+        )
+        deployment_name = f"{base_name}-vllm"
+        service_name = f"{base_name}-svc"
+        
+        # Get vLLM image
+        vllm_image = self.k8s_config.get("vllm_image")
+        if not vllm_image:
+            # Default vLLM image - could be made configurable
+            vllm_image = "vllm/vllm-openai:latest"
+            logger.warning(f"vLLM image not specified, using default: {vllm_image}")
+        
+        # Create vLLM Deployment
+        create_vllm_deployment(
+            trial_config=trial_config,
+            deployment_name=deployment_name,
+            namespace=self.namespace,
+            vllm_image=vllm_image,
+            resource_requests=self.k8s_config.get("resource_requests"),
+            resource_limits=self.k8s_config.get("resource_limits"),
+            kubeconfig=self.kubeconfig,
+        )
+        
+        # Create vLLM Service
+        service_type = self.k8s_config.get("service_type", "ClusterIP")
+        service_port = self.k8s_config.get("service_port", 8000)
+        create_vllm_service(
+            trial_config=trial_config,
+            service_name=service_name,
+            deployment_name=deployment_name,
+            namespace=self.namespace,
+            service_type=service_type,
+            service_port=service_port,
+            kubeconfig=self.kubeconfig,
+        )
+        
+        # Create trial controller
+        benchmark_image = self.k8s_config.get("benchmark_image")
+        controller = KubernetesTrialController(
+            deployment_name=deployment_name,
+            service_name=service_name,
+            namespace=self.namespace,
+            benchmark_image=benchmark_image,
+            service_type=service_type,
+            service_port=service_port,
+            kubeconfig=self.kubeconfig,
+        )
+        
+        # Submit trial execution in thread pool
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(controller.run_trial, trial_config)
+        
+        # Track trial
+        self.active_trials[trial_config.trial_id] = (
+            deployment_name,
+            service_name,
+            future,
+            executor,
+        )
+        
+        logger.info(
+            f"Submitted trial {trial_config.trial_id} "
+            f"(Deployment: {deployment_name}, Service: {service_name})"
+        )
+        
+        return JobHandle(
+            trial_id=trial_config.trial_id,
+            backend_job_id=deployment_name,
+            status="running",
+        )
+
+    def poll_trials(
+        self, job_handles: List[JobHandle]
+    ) -> Tuple[List[TrialResult], List[JobHandle]]:
+        """Poll for completed trials.
+        
+        Args:
+            job_handles: List of job handles to poll
+            
+        Returns:
+            Tuple of (completed results, remaining handles)
+        """
+        completed_results = []
+        remaining_handles = []
+        
+        for handle in job_handles:
+            trial_id = handle.trial_id
+            if trial_id not in self.active_trials:
+                # Trial not found - mark as failed
+                logger.warning(f"Trial {trial_id} not found in active trials")
+                completed_results.append(
+                    TrialResult(
+                        trial_id=trial_id,
+                        trial_number=0,
+                        trial_type="unknown",
+                        objective_values=[],
+                        detailed_metrics={},
+                        execution_info=None,
+                        success=False,
+                        error_message="Trial not found in active trials",
+                    )
+                )
+                continue
+            
+            deployment_name, service_name, future, executor = self.active_trials[trial_id]
+            
+            # Check if future is done
+            if future.done():
+                try:
+                    result = future.result(timeout=1)
+                    completed_results.append(result)
+                    # Remove from active trials
+                    del self.active_trials[trial_id]
+                except Exception as e:
+                    logger.error(f"Error getting result for trial {trial_id}: {e}")
+                    completed_results.append(
+                        TrialResult(
+                            trial_id=trial_id,
+                            trial_number=0,
+                            trial_type="unknown",
+                            objective_values=[],
+                            detailed_metrics={},
+                            execution_info=None,
+                            success=False,
+                            error_message=str(e),
+                        )
+                    )
+                    del self.active_trials[trial_id]
+            else:
+                remaining_handles.append(handle)
+        
+        return completed_results, remaining_handles
+
+    def cleanup_all_trials(self):
+        """Force cleanup of all active trials and their resources."""
+        from .k8s_utils import delete_vllm_resources
+        
+        logger.info(f"Cleaning up {len(self.active_trials)} active Kubernetes trials")
+        
+        for trial_id, (deployment_name, service_name, future, executor) in list(
+            self.active_trials.items()
+        ):
+            try:
+                # Cancel future if still running
+                if not future.done():
+                    future.cancel()
+                
+                # Delete Kubernetes resources
+                delete_vllm_resources(
+                    deployment_name=deployment_name,
+                    service_name=service_name,
+                    namespace=self.namespace,
+                    kubeconfig=self.kubeconfig,
+                )
+                
+                # Shutdown executor
+                executor.shutdown(wait=False)
+                
+                logger.info(f"Cleaned up trial {trial_id}")
+            except Exception as e:
+                logger.error(f"Error cleaning up trial {trial_id}: {e}")
+        
+        self.active_trials.clear()
+        logger.info("Completed cleanup of all active Kubernetes trials")
+
+    def shutdown(self):
+        """Shutdown Kubernetes execution backend."""
+        self.cleanup_all_trials()
+        logger.info("Shutdown Kubernetes execution backend")
