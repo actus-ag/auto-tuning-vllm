@@ -1546,7 +1546,7 @@ class HelmTrialController(BaseTrialController):
         
         # Create benchmark Job
         self.benchmark_job_name = create_benchmark_job(
-            trial_config, self.server_url, self.namespace, benchmark_image
+            trial_config, self.server_url, self.namespace, benchmark_image, kubeconfig=None
         )
         
         controller_logger.info(f"Created benchmark Job: {self.benchmark_job_name}")
@@ -1647,6 +1647,21 @@ class HelmTrialController(BaseTrialController):
             completed = self._wait_for_benchmark_completion(job_name, int(max_benchmark_time))
             
             if not completed:
+                # Collect logs before raising error
+                try:
+                    from .helm_utils import collect_job_logs
+                    kubeconfig = None
+                    if hasattr(self, 'kubeconfig'):
+                        kubeconfig = self.kubeconfig
+                    logs = collect_job_logs(job_name, self.namespace, kubeconfig)
+                    controller_logger.error(
+                        f"Benchmark Job {job_name} did not complete. Logs:\n{logs}"
+                    )
+                except Exception as log_e:
+                    controller_logger.warning(
+                        f"Failed to collect logs for incomplete benchmark job "
+                        f"{job_name}: {log_e}"
+                    )
                 raise RuntimeError(f"Benchmark Job {job_name} did not complete within timeout")
             
             # Extract results
@@ -1881,7 +1896,7 @@ class KubernetesTrialController(BaseTrialController):
         
         # Create benchmark Job
         self.benchmark_job_name = create_benchmark_job(
-            trial_config, self.server_url, self.namespace, benchmark_image or self.benchmark_image
+            trial_config, self.server_url, self.namespace, benchmark_image or self.benchmark_image, self.kubeconfig
         )
         
         controller_logger.info(f"Created benchmark Job: {self.benchmark_job_name}")
@@ -1954,6 +1969,24 @@ class KubernetesTrialController(BaseTrialController):
             server_info = self._start_vllm_server(trial_config)
             execution_info.worker_node_id = self._get_worker_id()
             
+            # Wait for server to actually be ready (HTTP health check)
+            # Note: wait_for_deployment_ready only checks pod status, not HTTP readiness
+            controller_logger.info(
+                f"Waiting for server at {server_info['url']} to be ready "
+                f"(timeout: {trial_config.vllm_startup_timeout}s)"
+            )
+            from .helm_utils import wait_for_service_ready
+            ready = wait_for_service_ready(
+                service_name=server_info["url"],
+                namespace=self.namespace,
+                timeout=trial_config.vllm_startup_timeout,
+                kubeconfig=self.kubeconfig,
+            )
+            if not ready:
+                raise RuntimeError(
+                    f"vLLM server at {server_info['url']} not ready after {trial_config.vllm_startup_timeout}s"
+                )
+            
             controller_logger.info(
                 f"Server ready at {server_info['url']} "
                 f"(Deployment: {self.deployment_name})"
@@ -1979,6 +2012,21 @@ class KubernetesTrialController(BaseTrialController):
             completed = self._wait_for_benchmark_completion(job_name, int(max_benchmark_time))
             
             if not completed:
+                # Collect logs before raising error
+                try:
+                    from .helm_utils import collect_job_logs
+                    kubeconfig = None
+                    if hasattr(self, 'kubeconfig'):
+                        kubeconfig = self.kubeconfig
+                    logs = collect_job_logs(job_name, self.namespace, kubeconfig)
+                    controller_logger.error(
+                        f"Benchmark Job {job_name} did not complete. Logs:\n{logs}"
+                    )
+                except Exception as log_e:
+                    controller_logger.warning(
+                        f"Failed to collect logs for incomplete benchmark job "
+                        f"{job_name}: {log_e}"
+                    )
                 raise RuntimeError(f"Benchmark Job {job_name} did not complete within timeout")
             
             # Extract results

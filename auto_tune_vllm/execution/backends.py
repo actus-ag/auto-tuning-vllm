@@ -1174,6 +1174,38 @@ class HelmExecutionBackend(ExecutionBackend):
                     completed_results.append(result)
                     logger.info(f"Completed Helm trial {trial_id}")
                     
+                    # Clean up Helm release before removing from active trials
+                    try:
+                        import subprocess
+                        uninstall_cmd = [
+                            "helm",
+                            "uninstall",
+                            release_name,
+                            "--namespace",
+                            self.namespace,
+                        ]
+                        if self.kubeconfig:
+                            uninstall_cmd.extend(["--kubeconfig", self.kubeconfig])
+                        
+                        result = subprocess.run(
+                            uninstall_cmd,
+                            capture_output=True,
+                            text=True,
+                            timeout=60,
+                        )
+                        if result.returncode == 0:
+                            logger.debug(f"Uninstalled Helm release: {release_name}")
+                        else:
+                            logger.warning(
+                                f"Helm uninstall returned non-zero exit code "
+                                f"for {release_name}: {result.stderr}"
+                            )
+                    except Exception as cleanup_e:
+                        logger.warning(
+                            f"Failed to cleanup Helm release {release_name} "
+                            f"for trial {trial_id}: {cleanup_e}"
+                        )
+                    
                     # Clean up
                     executor.shutdown(wait=False)
                     del self.active_trials[trial_id]
@@ -1194,6 +1226,39 @@ class HelmExecutionBackend(ExecutionBackend):
                         error_message=str(e),
                     )
                     completed_results.append(error_result)
+                    
+                    # Clean up Helm release even on error
+                    try:
+                        import subprocess
+                        uninstall_cmd = [
+                            "helm",
+                            "uninstall",
+                            release_name,
+                            "--namespace",
+                            self.namespace,
+                        ]
+                        if self.kubeconfig:
+                            uninstall_cmd.extend(["--kubeconfig", self.kubeconfig])
+                        
+                        result = subprocess.run(
+                            uninstall_cmd,
+                            capture_output=True,
+                            text=True,
+                            timeout=60,
+                        )
+                        if result.returncode == 0:
+                            logger.debug(f"Uninstalled Helm release: {release_name}")
+                        else:
+                            logger.warning(
+                                f"Helm uninstall returned non-zero exit code "
+                                f"for {release_name}: {result.stderr}"
+                            )
+                    except Exception as cleanup_e:
+                        logger.warning(
+                            f"Failed to cleanup Helm release {release_name} "
+                            f"for failed trial {trial_id}: {cleanup_e}"
+                        )
+                    
                     executor.shutdown(wait=False)
                     del self.active_trials[trial_id]
             else:
@@ -1584,6 +1649,18 @@ class KubernetesExecutionBackend(ExecutionBackend):
                 try:
                     result = future.result(timeout=1)
                     completed_results.append(result)
+                    # Cleanup Kubernetes resources before removing from active trials
+                    try:
+                        from .k8s_utils import delete_vllm_resources
+                        delete_vllm_resources(
+                            deployment_name=deployment_name,
+                            service_name=service_name,
+                            namespace=self.namespace,
+                            kubeconfig=self.kubeconfig,
+                        )
+                        logger.debug(f"Cleaned up resources for trial {trial_id}")
+                    except Exception as cleanup_e:
+                        logger.warning(f"Failed to cleanup resources for trial {trial_id}: {cleanup_e}")
                     # Remove from active trials
                     del self.active_trials[trial_id]
                 except Exception as e:
@@ -1600,6 +1677,18 @@ class KubernetesExecutionBackend(ExecutionBackend):
                             error_message=str(e),
                         )
                     )
+                    # Cleanup Kubernetes resources even on error
+                    try:
+                        from .k8s_utils import delete_vllm_resources
+                        delete_vllm_resources(
+                            deployment_name=deployment_name,
+                            service_name=service_name,
+                            namespace=self.namespace,
+                            kubeconfig=self.kubeconfig,
+                        )
+                        logger.debug(f"Cleaned up resources for failed trial {trial_id}")
+                    except Exception as cleanup_e:
+                        logger.warning(f"Failed to cleanup resources for failed trial {trial_id}: {cleanup_e}")
                     del self.active_trials[trial_id]
             else:
                 remaining_handles.append(handle)

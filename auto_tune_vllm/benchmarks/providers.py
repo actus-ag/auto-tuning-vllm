@@ -597,7 +597,7 @@ class MLPerfBenchmark(BenchmarkProvider):
     ) -> list[str]:
         """Build MLPerf harness command arguments."""
         cmd = [
-            "python",
+            "python3",
             "harness_main.py",
             "--model",
             config.model,

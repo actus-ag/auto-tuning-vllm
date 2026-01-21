@@ -78,6 +78,7 @@ class OptimizationConfig:
     approach: Optional[str] = None  # "single_objective" or "multi_objective"
     objectives: Optional[List[ObjectiveConfig]] = None  # For multi-objective
     preset: Optional[str] = None  # "high_throughput", "low_latency", "balanced"
+    skip_baseline: bool = False  # Skip running baseline trials if True
 
     def __post_init__(self):
         """Process and validate optimization configuration."""

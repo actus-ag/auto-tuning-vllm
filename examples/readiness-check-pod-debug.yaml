@@ -1,0 +1,64 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: readiness-check-debug
+  # namespace: default  # Change this to your namespace
+  labels:
+    app: auto-tune-vllm-readiness-check
+spec:
+  restartPolicy: Never
+  containers:
+    - name: readiness-check
+      image: curlimages/curl:latest
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          #!/bin/sh
+          set -e
+          MAX_ATTEMPTS=60
+          INTERVAL=5
+          ATTEMPT=0
+          
+          # Get service URL from environment variable
+          URL="${SERVICE_URL}"
+          
+          # Ensure URL ends with /v1/models if it doesn't already
+          if [ -z "$URL" ]; then
+            echo "ERROR: SERVICE_URL environment variable is not set"
+            exit 1
+          fi
+          
+          if ! echo "$URL" | grep -q "/v1/models$"; then
+            if echo "$URL" | grep -q "/v1"; then
+              URL=$(echo "$URL" | sed 's|/v1.*|/v1/models|')
+            else
+              URL="${URL}/v1/models"
+            fi
+          fi
+          
+          echo "Starting readiness check for URL: $URL"
+          echo "Will check up to $MAX_ATTEMPTS times with $INTERVAL second intervals"
+          
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            ATTEMPT=$((ATTEMPT + 1))
+            echo "[Attempt $ATTEMPT/$MAX_ATTEMPTS] Checking $URL..."
+            
+            HTTP_CODE=$(curl -f -s -o /dev/null -w '%{http_code}' "$URL" || echo "000")
+            echo "[Attempt $ATTEMPT/$MAX_ATTEMPTS] HTTP response code: $HTTP_CODE"
+            
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "Service is READY! HTTP 200 received."
+              echo "READY"
+              exit 0
+            else
+              echo "[Attempt $ATTEMPT/$MAX_ATTEMPTS] Service not ready yet (HTTP $HTTP_CODE), waiting $INTERVAL seconds..."
+              sleep $INTERVAL
+            fi
+          done
+          
+          echo "Service did not become ready after $MAX_ATTEMPTS attempts"
+          echo "NOT_READY"
+          exit 1
+      env:
+        - name: SERVICE_URL
+          value: "http://mlperf-server-k8s-direct-21695-trial-1-svc:8000"  # Replace with your actual service URL

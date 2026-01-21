@@ -89,7 +89,7 @@ def create_vllm_deployment(
     env_vars = trial_config.environment_vars
     
     # Build container command
-    cmd = ["python", "-m", "vllm.entrypoints.openai.api_server"]
+    cmd = ["python3", "-m", "vllm.entrypoints.openai.api_server"]
     args = vllm_args.copy()
     
     # Add model if not already in args
@@ -142,10 +142,38 @@ def create_vllm_deployment(
                                         protocol="TCP",
                                     )
                                 ],
+                                volume_mounts=[
+                                    client.V1VolumeMount(
+                                        name="cache",
+                                        mount_path="/.cache",
+                                    ),
+                                    client.V1VolumeMount(
+                                        name="config",
+                                        mount_path="/.config",
+                                    ),
+                                    client.V1VolumeMount(
+                                        name="triton",
+                                        mount_path="/.triton",
+                                    )
+                                ],
                                 resources=client.V1ResourceRequirements(
                                     requests=resource_requests or {},
                                     limits=resource_limits or {},
                                 ) if (resource_requests or resource_limits) else None,
+                            )
+                        ],
+                        volumes=[
+                            client.V1Volume(
+                                name="cache",
+                                empty_dir=client.V1EmptyDirVolumeSource(),
+                            ),
+                            client.V1Volume(
+                                name="config",
+                                empty_dir=client.V1EmptyDirVolumeSource(),
+                            ),
+                            client.V1Volume(
+                                name="triton",
+                                empty_dir=client.V1EmptyDirVolumeSource(),
                             )
                         ],
                         restart_policy="Always",

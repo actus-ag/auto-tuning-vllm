@@ -518,8 +518,12 @@ class StudyController:
         )
 
         try:
-            # Run baseline trials first if configured
-            if self.config.baseline and self.config.baseline.enabled:
+            # Run baseline trials first if configured and not skipped
+            if (
+                self.config.baseline
+                and self.config.baseline.enabled
+                and not self.config.optimization.skip_baseline
+            ):
                 self._run_baseline_trials()
 
             while self.completed_trials < total_trials:
@@ -1154,6 +1158,11 @@ class StudyController:
         if not self.config.baseline or not self.config.baseline.enabled:
             logger.warning(
                 "No baseline configuration found or disabled, skipping baseline trials"
+            )
+            return
+        if self.config.optimization.skip_baseline:
+            logger.info(
+                "skip_baseline flag is set to true, skipping baseline trials"
             )
             return
         logger.info("🔄 Running baseline trials...")

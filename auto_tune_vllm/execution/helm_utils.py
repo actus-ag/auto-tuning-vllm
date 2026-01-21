@@ -985,7 +985,7 @@ def delete_readiness_check_job(job_name: str, namespace: str):
 
 
 def wait_for_service_ready(
-    service_name: str, namespace: str, timeout: int = 300
+    service_name: str, namespace: str, timeout: int = 300, kubeconfig: Optional[str] = None
 ) -> bool:
     """Wait for Kubernetes service to be ready.
     
@@ -1013,9 +1013,16 @@ def wait_for_service_ready(
     # #endregion
     
     try:
-        config.load_incluster_config()
-    except config.ConfigException:
-        config.load_kube_config()
+        if kubeconfig:
+            config.load_kube_config(config_file=kubeconfig)
+        else:
+            try:
+                config.load_incluster_config()
+            except config.ConfigException:
+                config.load_kube_config()
+    except Exception as e:
+        logger.error(f"Failed to load Kubernetes config: {e}")
+        raise RuntimeError(f"Failed to load Kubernetes config: {e}")
     
     v1 = client.CoreV1Api()
     start_time = time.time()
@@ -1061,14 +1068,18 @@ def wait_for_service_ready(
                     # LoadBalancer or NodePort - can connect directly
                     health_url = f"http://{hostname}:{port}/v1/models"
             except ApiException as e:
-                logger.debug(
+                logger.warning(
                     f"Kubernetes API error while reading service '{service_name_only}' in namespace '{namespace}': "
-                    f"status={e.status}, reason={e.reason}. Using DNS name fallback."
+                    f"status={e.status}, reason={e.reason}. Assuming ClusterIP and creating readiness check Job."
                 )
-                health_url = f"http://{hostname}:{port}/v1/models"
+                # If we can't read the service, assume it's ClusterIP and create readiness check Job
+                is_cluster_ip = True
+                health_url = None
             except Exception as e:
-                logger.debug(f"Error reading service '{service_name_only}': {e}. Using DNS name fallback.")
-                health_url = f"http://{hostname}:{port}/v1/models"
+                logger.warning(f"Error reading service '{service_name_only}': {e}. Assuming ClusterIP and creating readiness check Job.")
+                # If we can't read the service, assume it's ClusterIP and create readiness check Job
+                is_cluster_ip = True
+                health_url = None
     else:
         # Service name only - get service object
         try:
@@ -1140,9 +1151,13 @@ def wait_for_service_ready(
         
         try:
             create_readiness_check_job(service_name, namespace, readiness_check_job_name)
+            logger.info(f"Created readiness check Job '{readiness_check_job_name}' for ClusterIP service")
         except Exception as e:
             logger.error(f"Failed to create readiness check Job: {e}")
             readiness_check_job_name = None
+            # If we can't create the Job, we can't check readiness for ClusterIP
+            logger.error("Cannot check ClusterIP service readiness without Job. Service may not be accessible.")
+            return False
     
     while time.time() - start_time < timeout:
         try:
@@ -1213,7 +1228,7 @@ def _build_benchmark_env(trial_config: TrialConfig, benchmark_type: str) -> List
 
 
 def create_benchmark_job(
-    trial_config: TrialConfig, server_url: str, namespace: str, benchmark_image: Optional[str] = None
+    trial_config: TrialConfig, server_url: str, namespace: str, benchmark_image: Optional[str] = None, kubeconfig: Optional[str] = None
 ) -> str:
     """Create Kubernetes Job for benchmark execution.
     
@@ -1221,6 +1236,8 @@ def create_benchmark_job(
         trial_config: Trial configuration
         server_url: vLLM server URL
         namespace: Kubernetes namespace
+        benchmark_image: Optional container image for benchmark
+        kubeconfig: Optional path to kubeconfig file
         
     Returns:
         Job name
@@ -1233,9 +1250,15 @@ def create_benchmark_job(
         raise RuntimeError("kubernetes library required for Helm backend")
     
     try:
-        config.load_incluster_config()
-    except config.ConfigException:
-        config.load_kube_config()
+        if kubeconfig:
+            config.load_kube_config(config_file=kubeconfig)
+        else:
+            try:
+                config.load_incluster_config()
+            except config.ConfigException:
+                config.load_kube_config()
+    except Exception as e:
+        raise RuntimeError(f"Failed to load Kubernetes config: {e}")
     
     batch_v1 = client.BatchV1Api()
     
@@ -1256,7 +1279,7 @@ def create_benchmark_job(
     elif benchmark_type == "mlperf":
         benchmark_provider = MLPerfBenchmark()
         default_image = "quay.io/rh-ee-nmiriyal/mlperf-6.0:harness"
-        working_dir = "mlperf-inference-6.0-redhat/harness"
+        working_dir = "/vllm-workspace/mlperf-inference-6.0-redhat"
     else:
         raise ValueError(
             f"Unsupported benchmark type for Helm execution: {benchmark_type}"
@@ -1276,6 +1299,23 @@ def create_benchmark_job(
         )
     else:
         raise ValueError(f"Unsupported benchmark type: {benchmark_type}")
+    
+    # Use default image if benchmark_image is None or empty, ensuring we always use the correct image for the benchmark type
+    # This prevents accidentally using the vLLM image for benchmark jobs
+    if benchmark_image:
+        # Safety check: warn if vLLM image is being used for benchmark
+        if "vllm" in benchmark_image.lower() and "openai" in benchmark_image.lower():
+            logger.warning(
+                f"WARNING: Provided benchmark_image '{benchmark_image}' appears to be a vLLM image. "
+                f"Using default benchmark image '{default_image}' instead for {benchmark_type} benchmark."
+            )
+            final_image = default_image
+        else:
+            final_image = benchmark_image
+            logger.info(f"Using provided benchmark image: {final_image}")
+    else:
+        final_image = default_image
+        logger.info(f"Using default benchmark image for {benchmark_type}: {final_image}")
     
     # Create Job manifest
     job_manifest = {
@@ -1308,9 +1348,9 @@ def create_benchmark_job(
                     "containers": [
                         {
                             "name": "benchmark",
-                            "image": benchmark_image or default_image,
+                            "image": final_image,
                             **({"workingDir": working_dir} if working_dir else {}),
-                            "command": [cmd[0]] if cmd else (["python", "harness_main.py"] if benchmark_type == "mlperf" else ["guidellm"]),
+                            "command": [cmd[0]] if cmd else (["python3", "harness/harness_main.py"] if benchmark_type == "mlperf" else ["guidellm"]),
                             "args": cmd[1:] if len(cmd) > 1 else [],
                             "env": _build_benchmark_env(trial_config, benchmark_type),
                             "volumeMounts": [
@@ -1385,6 +1425,12 @@ def wait_for_job_completion(job_name: str, namespace: str, timeout: int = 3600) 
                 return True
             elif job.status.failed:
                 logger.error(f"Job {job_name} failed")
+                # Collect logs for failed job
+                try:
+                    logs = collect_job_logs(job_name, namespace)
+                    logger.error(f"Job {job_name} logs:\n{logs}")
+                except Exception as log_e:
+                    logger.warning(f"Failed to collect logs for failed job {job_name}: {log_e}")
                 return False
             
             # Job still running
@@ -1403,7 +1449,130 @@ def wait_for_job_completion(job_name: str, namespace: str, timeout: int = 3600) 
             raise
     
     logger.warning(f"Job {job_name} timed out after {timeout}s")
+    # Collect logs for timed out job
+    try:
+        logs = collect_job_logs(job_name, namespace)
+        logger.warning(f"Job {job_name} logs (timeout):\n{logs}")
+    except Exception as log_e:
+        logger.warning(f"Failed to collect logs for timed out job {job_name}: {log_e}")
     return False
+
+
+def collect_job_logs(job_name: str, namespace: str, kubeconfig: Optional[str] = None) -> str:
+    """Collect logs from all pods belonging to a Kubernetes Job.
+    
+    Args:
+        job_name: Job name
+        namespace: Kubernetes namespace
+        kubeconfig: Optional path to kubeconfig file
+        
+    Returns:
+        Combined logs from all pods as a string
+    """
+    try:
+        from kubernetes import client, config
+        from kubernetes.client.rest import ApiException
+    except ImportError:
+        logger.error("kubernetes library not available")
+        return "Kubernetes library not available, cannot collect logs"
+    
+    try:
+        if kubeconfig:
+            config.load_kube_config(config_file=kubeconfig)
+        else:
+            try:
+                config.load_incluster_config()
+            except config.ConfigException:
+                config.load_kube_config()
+    except Exception as e:
+        logger.error(f"Failed to load Kubernetes config: {e}")
+        return f"Failed to load Kubernetes config: {e}"
+    
+    core_v1 = client.CoreV1Api()
+    batch_v1 = client.BatchV1Api()
+    
+    all_logs = []
+    
+    try:
+        # Get Job to check status
+        try:
+            job = batch_v1.read_namespaced_job(name=job_name, namespace=namespace)
+            all_logs.append(f"=== Job Status ===\n")
+            all_logs.append(f"Job: {job_name}\n")
+            all_logs.append(f"Namespace: {namespace}\n")
+            if job.status:
+                all_logs.append(f"Succeeded: {job.status.succeeded}\n")
+                all_logs.append(f"Failed: {job.status.failed}\n")
+                all_logs.append(f"Active: {job.status.active}\n")
+                if job.status.conditions:
+                    for condition in job.status.conditions:
+                        all_logs.append(f"Condition: {condition.type} - {condition.status} - {condition.message or ''}\n")
+            all_logs.append("\n")
+        except ApiException as e:
+            all_logs.append(f"Failed to read Job status: {e}\n\n")
+        
+        # Get pods for this job
+        label_selector = f"job-name={job_name}"
+        try:
+            pods = core_v1.list_namespaced_pod(
+                namespace=namespace, label_selector=label_selector
+            )
+            
+            if not pods.items:
+                all_logs.append(f"No pods found for Job {job_name}\n")
+                return "".join(all_logs)
+            
+            # Collect logs from each pod
+            for pod in pods.items:
+                pod_name = pod.metadata.name
+                all_logs.append(f"\n=== Pod: {pod_name} ===\n")
+                
+                # Add pod status
+                if pod.status:
+                    all_logs.append(f"Phase: {pod.status.phase}\n")
+                    if pod.status.container_statuses:
+                        for container_status in pod.status.container_statuses:
+                            all_logs.append(f"Container: {container_status.name}\n")
+                            if container_status.state:
+                                if container_status.state.waiting:
+                                    all_logs.append(f"  Waiting: {container_status.state.waiting.reason} - {container_status.state.waiting.message or ''}\n")
+                                if container_status.state.terminated:
+                                    all_logs.append(f"  Terminated: {container_status.state.terminated.reason} - Exit Code: {container_status.state.terminated.exit_code}\n")
+                                    if container_status.state.terminated.message:
+                                        all_logs.append(f"  Message: {container_status.state.terminated.message}\n")
+                    all_logs.append("\n")
+                
+                # Try to get logs from each container
+                containers_to_check = ["benchmark"]
+                if pod.spec and pod.spec.containers:
+                    containers_to_check = [c.name for c in pod.spec.containers]
+                
+                for container_name in containers_to_check:
+                    try:
+                        logs = core_v1.read_namespaced_pod_log(
+                            name=pod_name,
+                            namespace=namespace,
+                            container=container_name,
+                            tail_lines=1000,  # Limit to last 1000 lines
+                        )
+                        all_logs.append(f"--- Container: {container_name} Logs ---\n")
+                        all_logs.append(logs)
+                        all_logs.append("\n")
+                    except ApiException as e:
+                        if e.status == 404:
+                            all_logs.append(f"Container {container_name} not found or pod not ready\n")
+                        else:
+                            all_logs.append(f"Failed to read logs from container {container_name}: {e}\n")
+                    except Exception as e:
+                        all_logs.append(f"Error reading logs from container {container_name}: {e}\n")
+        
+        except ApiException as e:
+            all_logs.append(f"Failed to list pods for Job {job_name}: {e}\n")
+    
+    except Exception as e:
+        all_logs.append(f"Error collecting logs: {e}\n")
+    
+    return "".join(all_logs)
 
 
 def extract_job_results(job_name: str, namespace: str) -> Dict[str, Any]:

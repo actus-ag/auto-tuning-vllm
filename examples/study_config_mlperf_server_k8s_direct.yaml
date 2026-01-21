@@ -3,8 +3,8 @@
 # Simpler than Helm backend - creates Deployments and Services directly
 
 study:
-  name: "mlperf_server_k8s_direct"
-  database_url: "postgresql://postgres:postgres@localhost:5432/optuna"
+  prefix: "mlperf_server_k8s_direct"
+  database_url: "postgresql://postgres:postgres@localhost:5432/optuna-k8s-direct"
   # For Kubernetes: Use port-forwarding or cluster-internal database URL
   # Example with port-forward: kubectl port-forward -n <namespace> svc/postgresql 5432:5432
 
@@ -35,18 +35,19 @@ optimization:
       percentile: "median"
   sampler: "tpe"  # Tree-structured Parzen Estimator
   n_trials: 50
+  skip_baseline: true
   # Note: Kubernetes backend only supports sequential trials (max_concurrent_trials=1)
 
 benchmark:
   # Constants: fixed values for all trials
   benchmark_type: "mlperf"
   model: "RedHatAI/Meta-Llama-3.1-8B-Instruct-FP8"
-  scenario: "Server"  # MLPerf Server scenario
+  scenario: "offline"  # MLPerf Server scenario
   dataset_path: "cnn_eval.json"  # Path to dataset file (must be accessible in pod)
   lg_model_name: "llama3_1-8b"  # LoadGen model name
   num_samples: 13368  # Number of samples to process
-  output_dir: "LLAMA3_1-8B-SERVER"  # Output directory for results
-  mlflow_experiment_name: "mlperf-server-k8s-direct"  # MLflow experiment name
+  output_dir: "LLAMA3_1-8B-OFFLINE"  # Output directory for results
+  mlflow_experiment_name: "mlperf-offline-k8s-direct"  # MLflow experiment name
   mlflow_host: "150.239.115.202"  # MLflow host address (must be accessible from pods)
   test_mode: "performance"  # Test mode: performance or accuracy
 
