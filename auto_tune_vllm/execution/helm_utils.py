@@ -409,6 +409,13 @@ def generate_helm_values(
     
     env_dict = {env["name"]: env.get("value", "") for env in container["env"] if "name" in env}
     env_dict.update(trial_config.environment_vars)
+    
+    # Set HF_HOME to PVC mount path if model_pvc is specified
+    model_pvc = helm_config.get("model_pvc")
+    model_mount_path = "/mnt/models"
+    if model_pvc:
+        env_dict["HF_HOME"] = model_mount_path
+    
     container["env"] = [{"name": k, "value": str(v)} for k, v in env_dict.items()]
     
     # Set model from benchmark config
@@ -429,6 +436,34 @@ def generate_helm_values(
     num_gpus = trial_config.resource_requirements.get("num_gpus", 1)
     container["resources"]["limits"]["nvidia.com/gpu"] = str(int(num_gpus))
     container["resources"]["requests"]["nvidia.com/gpu"] = str(int(num_gpus))
+    
+    # Add PVC volume mount if model_pvc is specified
+    model_pvc = helm_config.get("model_pvc")
+    model_mount_path = "/mnt/models"
+    if model_pvc:
+        # Add volumeMount to container
+        if "volumeMounts" not in container:
+            container["volumeMounts"] = []
+        # Check if volumeMount already exists
+        if not any(vm.get("name") == "model-pvc" for vm in container["volumeMounts"]):
+            container["volumeMounts"].append({
+                "name": "model-pvc",
+                "mountPath": model_mount_path,
+            })
+        
+        # Add volume to decode.volumes
+        if "volumes" not in values.get("decode", {}):
+            if "decode" not in values:
+                values["decode"] = {}
+            values["decode"]["volumes"] = []
+        # Check if volume already exists
+        if not any(v.get("name") == "model-pvc" for v in values["decode"]["volumes"]):
+            values["decode"]["volumes"].append({
+                "name": "model-pvc",
+                "persistentVolumeClaim": {
+                    "claimName": model_pvc,
+                },
+            })
     
     # Ensure routing and service configuration for llm-d-modelservice chart
     # The chart creates services through routing.proxy sidecar configuration

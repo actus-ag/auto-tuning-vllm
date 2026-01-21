@@ -289,6 +289,7 @@ class HelmConfig:
     # Gaie chart configuration
     gaie_chart_version: Optional[str] = None  # Gaie chart version
     gaie_values_template: Optional[str] = None  # Path to gaie values template
+    model_pvc: Optional[str] = None  # PersistentVolumeClaim name for model storage (e.g., "model-pvc")
 
 
 @dataclass
@@ -303,6 +304,7 @@ class KubernetesConfig:
     service_port: int = 8000  # Service port for vLLM server
     resource_requests: Optional[Dict[str, str]] = None  # Resource requests (e.g., {"nvidia.com/gpu": "1"})
     resource_limits: Optional[Dict[str, str]] = None  # Resource limits (e.g., {"nvidia.com/gpu": "1", "memory": "32Gi"})
+    model_pvc: Optional[str] = None  # PersistentVolumeClaim name for model storage (e.g., "model-pvc")
 
 
 @dataclass

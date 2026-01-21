@@ -1559,6 +1559,7 @@ class KubernetesExecutionBackend(ExecutionBackend):
             resource_requests=self.k8s_config.get("resource_requests"),
             resource_limits=self.k8s_config.get("resource_limits"),
             kubeconfig=self.kubeconfig,
+            model_pvc=self.k8s_config.get("model_pvc"),
         )
         
         # Create vLLM Service

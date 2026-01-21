@@ -48,6 +48,7 @@ def create_vllm_deployment(
     resource_requests: Optional[Dict[str, str]] = None,
     resource_limits: Optional[Dict[str, str]] = None,
     kubeconfig: Optional[str] = None,
+    model_pvc: Optional[str] = None,
 ) -> str:
     """Create Kubernetes Deployment for vLLM server.
     
@@ -59,6 +60,7 @@ def create_vllm_deployment(
         resource_requests: Resource requests (e.g., {"nvidia.com/gpu": "1"})
         resource_limits: Resource limits (e.g., {"nvidia.com/gpu": "1", "memory": "32Gi"})
         kubeconfig: Path to kubeconfig file
+        model_pvc: PersistentVolumeClaim name for model storage (e.g., "model-pvc")
         
     Returns:
         Deployment name
@@ -86,7 +88,12 @@ def create_vllm_deployment(
     
     # Build vLLM command and args
     vllm_args = trial_config.vllm_args
-    env_vars = trial_config.environment_vars
+    env_vars = trial_config.environment_vars.copy() if trial_config.environment_vars else {}
+    
+    # Set HF_HOME to PVC mount path if model_pvc is specified
+    model_mount_path = "/mnt/models"
+    if model_pvc:
+        env_vars["HF_HOME"] = model_mount_path
     
     # Build container command
     cmd = ["python3", "-m", "vllm.entrypoints.openai.api_server"]
@@ -155,7 +162,12 @@ def create_vllm_deployment(
                                         name="triton",
                                         mount_path="/.triton",
                                     )
-                                ],
+                                ] + ([
+                                    client.V1VolumeMount(
+                                        name="model-pvc",
+                                        mount_path=model_mount_path,
+                                    )
+                                ] if model_pvc else []),
                                 resources=client.V1ResourceRequirements(
                                     requests=resource_requests or {},
                                     limits=resource_limits or {},
@@ -175,7 +187,14 @@ def create_vllm_deployment(
                                 name="triton",
                                 empty_dir=client.V1EmptyDirVolumeSource(),
                             )
-                        ],
+                        ] + ([
+                            client.V1Volume(
+                                name="model-pvc",
+                                persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(
+                                    claim_name=model_pvc,
+                                ),
+                            )
+                        ] if model_pvc else []),
                         restart_policy="Always",
                     ),
                 ),

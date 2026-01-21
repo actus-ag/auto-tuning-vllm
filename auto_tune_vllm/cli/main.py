@@ -376,6 +376,7 @@ def optimize_command(
                     "infra_chart_version": study_config.helm_config.infra_chart_version,
                     "gaie_chart_version": study_config.helm_config.gaie_chart_version,
                     "gaie_values_template": study_config.helm_config.gaie_values_template,
+                    "model_pvc": study_config.helm_config.model_pvc,
                 }
             
             # Override with CLI args if provided
@@ -412,6 +413,7 @@ def optimize_command(
                     "service_port": study_config.k8s_config.service_port,
                     "resource_requests": study_config.k8s_config.resource_requests,
                     "resource_limits": study_config.k8s_config.resource_limits,
+                    "model_pvc": study_config.k8s_config.model_pvc,
                 }
             
             namespace = k8s_namespace or (study_config.k8s_config.namespace if study_config.k8s_config else "default")
