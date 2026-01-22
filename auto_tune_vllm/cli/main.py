@@ -414,6 +414,7 @@ def optimize_command(
                     "resource_requests": study_config.k8s_config.resource_requests,
                     "resource_limits": study_config.k8s_config.resource_limits,
                     "model_pvc": study_config.k8s_config.model_pvc,
+                    "benchmark_pvc": study_config.k8s_config.benchmark_pvc,
                 }
             
             namespace = k8s_namespace or (study_config.k8s_config.namespace if study_config.k8s_config else "default")

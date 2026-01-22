@@ -1123,7 +1123,8 @@ class HelmExecutionBackend(ExecutionBackend):
             
             # Create Helm trial controller and run in executor
             benchmark_image = self.helm_config.get("benchmark_image")
-            controller = HelmTrialController(release_name, self.namespace, benchmark_image, self.helm_config)
+            benchmark_pvc = self.helm_config.get("benchmark_pvc")
+            controller = HelmTrialController(release_name, self.namespace, benchmark_image, self.helm_config, benchmark_pvc=benchmark_pvc)
             executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
             future = executor.submit(controller.run_trial, trial_config)
             
@@ -1577,6 +1578,7 @@ class KubernetesExecutionBackend(ExecutionBackend):
         
         # Create trial controller
         benchmark_image = self.k8s_config.get("benchmark_image")
+        benchmark_pvc = self.k8s_config.get("benchmark_pvc")
         controller = KubernetesTrialController(
             deployment_name=deployment_name,
             service_name=service_name,
@@ -1585,6 +1587,7 @@ class KubernetesExecutionBackend(ExecutionBackend):
             service_type=service_type,
             service_port=service_port,
             kubeconfig=self.kubeconfig,
+            benchmark_pvc=benchmark_pvc,
         )
         
         # Submit trial execution in thread pool

@@ -1380,7 +1380,7 @@ class RayWorkerTrialController(BaseTrialController):
 class HelmTrialController(BaseTrialController):
     """Helm-based Kubernetes trial controller."""
 
-    def __init__(self, release_name: str, namespace: str = "default", benchmark_image: Optional[str] = None, helm_config: Optional[Dict[str, Any]] = None):
+    def __init__(self, release_name: str, namespace: str = "default", benchmark_image: Optional[str] = None, helm_config: Optional[Dict[str, Any]] = None, benchmark_pvc: Optional[str] = None):
         """Initialize Helm trial controller.
         
         Args:
@@ -1388,12 +1388,14 @@ class HelmTrialController(BaseTrialController):
             namespace: Kubernetes namespace
             benchmark_image: Container image for benchmark Jobs
             helm_config: Helm configuration dictionary (for full stack deployment checks)
+            benchmark_pvc: PersistentVolumeClaim name for benchmark results storage
         """
         super().__init__()
         self.release_name = release_name
         self.namespace = namespace
         self.benchmark_image = benchmark_image
         self.helm_config = helm_config or {}
+        self.benchmark_pvc = benchmark_pvc
         self.server_url: Optional[str] = None
         self.benchmark_job_name: Optional[str] = None
 
@@ -1546,7 +1548,7 @@ class HelmTrialController(BaseTrialController):
         
         # Create benchmark Job
         self.benchmark_job_name = create_benchmark_job(
-            trial_config, self.server_url, self.namespace, benchmark_image, kubeconfig=None
+            trial_config, self.server_url, self.namespace, benchmark_image, kubeconfig=None, benchmark_pvc=self.benchmark_pvc
         )
         
         controller_logger.info(f"Created benchmark Job: {self.benchmark_job_name}")
@@ -1569,7 +1571,8 @@ class HelmTrialController(BaseTrialController):
         controller_logger = self._get_trial_logger("controller")
         controller_logger.info(f"Waiting for benchmark Job {job_name} to complete")
         
-        return wait_for_job_completion(job_name, self.namespace, timeout)
+        kubeconfig = getattr(self, 'kubeconfig', None)
+        return wait_for_job_completion(job_name, self.namespace, timeout, kubeconfig=kubeconfig)
 
     def _extract_benchmark_results(self, job_name: str) -> dict:
         """Extract benchmark results from Kubernetes Job.
@@ -1585,7 +1588,8 @@ class HelmTrialController(BaseTrialController):
         controller_logger = self._get_trial_logger("controller")
         controller_logger.info(f"Extracting results from Job {job_name}")
         
-        return extract_job_results(job_name, self.namespace)
+        kubeconfig = getattr(self, 'kubeconfig', None)
+        return extract_job_results(job_name, self.namespace, kubeconfig=kubeconfig)
 
     def run_trial(
         self, trial_config: TrialConfig, cancellation_flag_actor=None
@@ -1643,17 +1647,19 @@ class HelmTrialController(BaseTrialController):
             execution_info.benchmark_job_name = job_name
             
             # Wait for benchmark completion
-            max_benchmark_time = trial_config.benchmark_config.max_seconds * 1.5
+            # Timeout should account for: pod initialization, PVC mounting, init container, benchmark duration
+            # Minimum 5 minutes for initialization, plus 1.5x benchmark duration
+            min_init_time = 300  # 5 minutes minimum for pod/PVC initialization
+            benchmark_time = trial_config.benchmark_config.max_seconds * 1.5
+            max_benchmark_time = max(min_init_time, benchmark_time)
             completed = self._wait_for_benchmark_completion(job_name, int(max_benchmark_time))
             
             if not completed:
                 # Collect logs before raising error
                 try:
                     from .helm_utils import collect_job_logs
-                    kubeconfig = None
-                    if hasattr(self, 'kubeconfig'):
-                        kubeconfig = self.kubeconfig
-                    logs = collect_job_logs(job_name, self.namespace, kubeconfig)
+                    kubeconfig = getattr(self, 'kubeconfig', None)
+                    logs = collect_job_logs(job_name, self.namespace, kubeconfig=kubeconfig)
                     controller_logger.error(
                         f"Benchmark Job {job_name} did not complete. Logs:\n{logs}"
                     )
@@ -1734,6 +1740,7 @@ class KubernetesTrialController(BaseTrialController):
         service_type: str = "ClusterIP",
         service_port: int = 8000,
         kubeconfig: Optional[str] = None,
+        benchmark_pvc: Optional[str] = None,
     ):
         """Initialize Kubernetes trial controller.
         
@@ -1745,6 +1752,7 @@ class KubernetesTrialController(BaseTrialController):
             service_type: Service type (ClusterIP, NodePort, LoadBalancer)
             service_port: Service port
             kubeconfig: Path to kubeconfig file
+            benchmark_pvc: PersistentVolumeClaim name for benchmark results storage
         """
         super().__init__()
         self.deployment_name = deployment_name
@@ -1754,6 +1762,7 @@ class KubernetesTrialController(BaseTrialController):
         self.service_type = service_type
         self.service_port = service_port
         self.kubeconfig = kubeconfig
+        self.benchmark_pvc = benchmark_pvc
         self.server_url: Optional[str] = None
         self.benchmark_job_name: Optional[str] = None
 
@@ -1896,7 +1905,7 @@ class KubernetesTrialController(BaseTrialController):
         
         # Create benchmark Job
         self.benchmark_job_name = create_benchmark_job(
-            trial_config, self.server_url, self.namespace, benchmark_image or self.benchmark_image, self.kubeconfig
+            trial_config, self.server_url, self.namespace, benchmark_image or self.benchmark_image, self.kubeconfig, benchmark_pvc=self.benchmark_pvc
         )
         
         controller_logger.info(f"Created benchmark Job: {self.benchmark_job_name}")
@@ -1919,7 +1928,8 @@ class KubernetesTrialController(BaseTrialController):
         controller_logger = self._get_trial_logger("controller")
         controller_logger.info(f"Waiting for benchmark Job {job_name} to complete")
         
-        return wait_for_job_completion(job_name, self.namespace, timeout)
+        kubeconfig = getattr(self, 'kubeconfig', None)
+        return wait_for_job_completion(job_name, self.namespace, timeout, kubeconfig=kubeconfig)
 
     def _extract_benchmark_results(self, job_name: str) -> dict:
         """Extract benchmark results from Kubernetes Job.
@@ -1935,7 +1945,8 @@ class KubernetesTrialController(BaseTrialController):
         controller_logger = self._get_trial_logger("controller")
         controller_logger.info(f"Extracting results from Job {job_name}")
         
-        return extract_job_results(job_name, self.namespace)
+        kubeconfig = getattr(self, 'kubeconfig', None)
+        return extract_job_results(job_name, self.namespace, kubeconfig=kubeconfig)
 
     def run_trial(
         self, trial_config: TrialConfig, cancellation_flag_actor=None
@@ -2008,17 +2019,19 @@ class KubernetesTrialController(BaseTrialController):
             execution_info.benchmark_job_name = job_name
             
             # Wait for benchmark completion
-            max_benchmark_time = trial_config.benchmark_config.max_seconds * 1.5
+            # Timeout should account for: pod initialization, PVC mounting, init container, benchmark duration
+            # Minimum 5 minutes for initialization, plus 1.5x benchmark duration
+            min_init_time = 300  # 5 minutes minimum for pod/PVC initialization
+            benchmark_time = trial_config.benchmark_config.max_seconds * 1.5
+            max_benchmark_time = max(min_init_time, benchmark_time)
             completed = self._wait_for_benchmark_completion(job_name, int(max_benchmark_time))
             
             if not completed:
                 # Collect logs before raising error
                 try:
                     from .helm_utils import collect_job_logs
-                    kubeconfig = None
-                    if hasattr(self, 'kubeconfig'):
-                        kubeconfig = self.kubeconfig
-                    logs = collect_job_logs(job_name, self.namespace, kubeconfig)
+                    kubeconfig = getattr(self, 'kubeconfig', None)
+                    logs = collect_job_logs(job_name, self.namespace, kubeconfig=kubeconfig)
                     controller_logger.error(
                         f"Benchmark Job {job_name} did not complete. Logs:\n{logs}"
                     )

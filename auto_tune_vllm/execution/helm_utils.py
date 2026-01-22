@@ -1277,7 +1277,7 @@ def _build_benchmark_env(trial_config: TrialConfig, benchmark_type: str) -> List
 
 
 def create_benchmark_job(
-    trial_config: TrialConfig, server_url: str, namespace: str, benchmark_image: Optional[str] = None, kubeconfig: Optional[str] = None
+    trial_config: TrialConfig, server_url: str, namespace: str, benchmark_image: Optional[str] = None, kubeconfig: Optional[str] = None, benchmark_pvc: Optional[str] = None
 ) -> str:
     """Create Kubernetes Job for benchmark execution.
     
@@ -1287,10 +1287,19 @@ def create_benchmark_job(
         namespace: Kubernetes namespace
         benchmark_image: Optional container image for benchmark
         kubeconfig: Optional path to kubeconfig file
+        benchmark_pvc: PersistentVolumeClaim name for benchmark results storage (REQUIRED for k8s backend)
         
     Returns:
         Job name
+        
+    Raises:
+        ValueError: If benchmark_pvc is not provided
     """
+    if not benchmark_pvc:
+        raise ValueError(
+            "benchmark_pvc is required for Kubernetes backend. "
+            "Please specify benchmark_pvc in your k8s configuration."
+        )
     try:
         from kubernetes import client, config
         from kubernetes.client.rest import ApiException
@@ -1308,6 +1317,31 @@ def create_benchmark_job(
                 config.load_kube_config()
     except Exception as e:
         raise RuntimeError(f"Failed to load Kubernetes config: {e}")
+    
+    # Verify PVC exists before creating the job
+    core_v1 = client.CoreV1Api()
+    try:
+        pvc = core_v1.read_namespaced_persistent_volume_claim(
+            name=benchmark_pvc, namespace=namespace
+        )
+        logger.debug(f"Verified PVC {benchmark_pvc} exists in namespace {namespace}")
+    except ApiException as e:
+        if e.status == 404:
+            raise ValueError(
+                f"PersistentVolumeClaim '{benchmark_pvc}' not found in namespace '{namespace}'. "
+                f"Please create the PVC before running trials. "
+                f"Example: kubectl create -f <pvc-manifest.yaml> -n {namespace}"
+            )
+        else:
+            logger.warning(
+                f"Could not verify PVC {benchmark_pvc} exists: {e}. "
+                f"Proceeding with job creation, but pod may fail to start if PVC is missing."
+            )
+    except Exception as e:
+        logger.warning(
+            f"Could not verify PVC {benchmark_pvc} exists: {e}. "
+            f"Proceeding with job creation, but pod may fail to start if PVC is missing."
+        )
     
     batch_v1 = client.BatchV1Api()
     
@@ -1335,7 +1369,15 @@ def create_benchmark_job(
         )
     
     benchmark_provider.set_trial_context(trial_config.study_name, trial_config.trial_id)
-    results_file = "/tmp/benchmark-results.json"
+    
+    # Construct hierarchical results file path for shared PVC
+    # Format: {study_name}/trial_{trial_id}/benchmark-results.json
+    # PVC is required - no fallback to emptyDir
+    results_base_path = "/mnt/results"
+    study_name_safe = sanitize_release_name(trial_config.study_name)
+    trial_id_safe = sanitize_release_name(trial_config.trial_id)
+    results_dir = f"{results_base_path}/{study_name_safe}/trial_{trial_id_safe}"
+    results_file = f"{results_dir}/benchmark-results.json"
     
     # Build command args based on benchmark type
     if benchmark_type == "guidellm":
@@ -1394,18 +1436,47 @@ def create_benchmark_job(
                 },
                 "spec": {
                     "restartPolicy": "Never",
+                    "initContainers": [
+                        {
+                            "name": "create-results-dir",
+                            "image": final_image if benchmark_type == "guidellm" else "busybox:latest",  # Use GuideLLM image for guidellm, busybox for others
+                            "command": ["sh", "-c", f"mkdir -p {results_dir}"],
+                            "volumeMounts": [
+                                {
+                                    "name": "results",
+                                    "mountPath": "/mnt/results",
+                                },
+                            ],
+                        },
+                    ],
                     "containers": [
                         {
                             "name": "benchmark",
                             "image": final_image,
                             **({"workingDir": working_dir} if working_dir else {}),
-                            "command": [cmd[0]] if cmd else (["python3", "harness/harness_main.py"] if benchmark_type == "mlperf" else ["guidellm"]),
+                            "command": [cmd[0]] if cmd else (["python", "harness/harness_main.py"] if benchmark_type == "mlperf" else ["guidellm"]),
                             "args": cmd[1:] if len(cmd) > 1 else [],
                             "env": _build_benchmark_env(trial_config, benchmark_type),
                             "volumeMounts": [
                                 {
                                     "name": "results",
-                                    "mountPath": "/tmp",
+                                    "mountPath": "/mnt/results",
+                                },
+                            ] + ([
+                                {
+                                    "name": "guidellm-cache",
+                                    "mountPath": "/home/guidellm/.cache",
+                                },
+                            ] if benchmark_type == "guidellm" else []),
+                        },
+                        {
+                            "name": "results-retriever",
+                            "image": final_image,  # Use same image as benchmark (already pulled)
+                            "command": ["sh", "-c", "sleep infinity"],
+                            "volumeMounts": [
+                                {
+                                    "name": "results",
+                                    "mountPath": "/mnt/results",
                                 },
                             ] + ([
                                 {
@@ -1418,7 +1489,9 @@ def create_benchmark_job(
                     "volumes": [
                         {
                             "name": "results",
-                            "emptyDir": {},
+                            "persistentVolumeClaim": {
+                                "claimName": benchmark_pvc,
+                            },
                         },
                     ] + ([
                         {
@@ -1449,13 +1522,14 @@ def create_benchmark_job(
         )
 
 
-def wait_for_job_completion(job_name: str, namespace: str, timeout: int = 3600) -> bool:
+def wait_for_job_completion(job_name: str, namespace: str, timeout: int = 3600, kubeconfig: Optional[str] = None) -> bool:
     """Wait for Kubernetes Job to complete.
     
     Args:
         job_name: Job name
         namespace: Kubernetes namespace
         timeout: Timeout in seconds
+        kubeconfig: Optional path to kubeconfig file
         
     Returns:
         True if job completed successfully, False if failed or timeout
@@ -1468,11 +1542,19 @@ def wait_for_job_completion(job_name: str, namespace: str, timeout: int = 3600) 
         return False
     
     try:
-        config.load_incluster_config()
-    except config.ConfigException:
-        config.load_kube_config()
+        if kubeconfig:
+            config.load_kube_config(config_file=kubeconfig)
+        else:
+            try:
+                config.load_incluster_config()
+            except config.ConfigException:
+                config.load_kube_config()
+    except Exception as e:
+        logger.error(f"Failed to load Kubernetes config: {e}")
+        return False
     
     batch_v1 = client.BatchV1Api()
+    core_v1 = client.CoreV1Api()
     start_time = time.time()
     
     while time.time() - start_time < timeout:
@@ -1486,11 +1568,74 @@ def wait_for_job_completion(job_name: str, namespace: str, timeout: int = 3600) 
                 logger.error(f"Job {job_name} failed")
                 # Collect logs for failed job
                 try:
-                    logs = collect_job_logs(job_name, namespace)
+                    logs = collect_job_logs(job_name, namespace, kubeconfig=kubeconfig)
                     logger.error(f"Job {job_name} logs:\n{logs}")
                 except Exception as log_e:
                     logger.warning(f"Failed to collect logs for failed job {job_name}: {log_e}")
                 return False
+            
+            # Check if pods are stuck in PodInitializing (likely PVC mounting issue)
+            # Also check if benchmark container has completed (even if sidecar is still running)
+            if job.status.active and job.status.active > 0:
+                label_selector = f"job-name={job_name}"
+                pods = core_v1.list_namespaced_pod(
+                    namespace=namespace, label_selector=label_selector
+                )
+                for pod in pods.items:
+                    if pod.status and pod.status.phase == "Pending":
+                        # Check for PVC mounting issues
+                        if pod.status.conditions:
+                            for condition in pod.status.conditions:
+                                if condition.type == "PodScheduled" and condition.status != "True":
+                                    if condition.reason == "Unschedulable":
+                                        logger.warning(
+                                            f"Pod {pod.metadata.name} is unschedulable: {condition.message}. "
+                                            f"This may indicate a PVC mounting issue. "
+                                            f"Verify that PVC exists and is accessible in namespace {namespace}."
+                                        )
+                        # Check container status for init container issues
+                        if pod.status.init_container_statuses:
+                            for init_status in pod.status.init_container_statuses:
+                                if init_status.state and init_status.state.waiting:
+                                    if init_status.state.waiting.reason in ["ImagePullBackOff", "ErrImagePull", "CreateContainerError"]:
+                                        logger.warning(
+                                            f"Init container {init_status.name} in pod {pod.metadata.name} "
+                                            f"has issue: {init_status.state.waiting.reason} - {init_status.state.waiting.message}"
+                                        )
+                    elif pod.status and pod.status.phase == "Running":
+                        # Check if benchmark container has completed successfully
+                        # (Job won't show as succeeded if sidecar is still running)
+                        if pod.status.container_statuses:
+                            benchmark_completed = False
+                            benchmark_failed = False
+                            for container_status in pod.status.container_statuses:
+                                if container_status.name == "benchmark":
+                                    if container_status.state and container_status.state.terminated:
+                                        if container_status.state.terminated.exit_code == 0:
+                                            benchmark_completed = True
+                                            logger.info(
+                                                f"Benchmark container in pod {pod.metadata.name} completed successfully. "
+                                                f"Sidecar may still be running for results retrieval."
+                                            )
+                                        else:
+                                            benchmark_failed = True
+                                            logger.error(
+                                                f"Benchmark container in pod {pod.metadata.name} failed with exit code "
+                                                f"{container_status.state.terminated.exit_code}"
+                                            )
+                                        break
+                            
+                            if benchmark_completed:
+                                # Benchmark is done, return True even though Job shows as active
+                                logger.info(
+                                    f"Job {job_name} benchmark completed successfully "
+                                    f"(sidecar still running for results retrieval)"
+                                )
+                                return True
+                            elif benchmark_failed:
+                                # Benchmark failed, return False
+                                logger.error(f"Job {job_name} benchmark container failed")
+                                return False
             
             # Job still running
             time.sleep(5)
@@ -1510,7 +1655,7 @@ def wait_for_job_completion(job_name: str, namespace: str, timeout: int = 3600) 
     logger.warning(f"Job {job_name} timed out after {timeout}s")
     # Collect logs for timed out job
     try:
-        logs = collect_job_logs(job_name, namespace)
+        logs = collect_job_logs(job_name, namespace, kubeconfig=kubeconfig)
         logger.warning(f"Job {job_name} logs (timeout):\n{logs}")
     except Exception as log_e:
         logger.warning(f"Failed to collect logs for timed out job {job_name}: {log_e}")
@@ -1634,12 +1779,13 @@ def collect_job_logs(job_name: str, namespace: str, kubeconfig: Optional[str] = 
     return "".join(all_logs)
 
 
-def extract_job_results(job_name: str, namespace: str) -> Dict[str, Any]:
+def extract_job_results(job_name: str, namespace: str, kubeconfig: Optional[str] = None) -> Dict[str, Any]:
     """Extract benchmark results from Kubernetes Job.
     
     Args:
         job_name: Job name
         namespace: Kubernetes namespace
+        kubeconfig: Optional path to kubeconfig file
         
     Returns:
         Dictionary of benchmark results
@@ -1652,9 +1798,15 @@ def extract_job_results(job_name: str, namespace: str) -> Dict[str, Any]:
         raise RuntimeError("kubernetes library required for Helm backend")
     
     try:
-        config.load_incluster_config()
-    except config.ConfigException:
-        config.load_kube_config()
+        if kubeconfig:
+            config.load_kube_config(config_file=kubeconfig)
+        else:
+            try:
+                config.load_incluster_config()
+            except config.ConfigException:
+                config.load_kube_config()
+    except Exception as e:
+        raise RuntimeError(f"Failed to load Kubernetes config: {e}")
     
     core_v1 = client.CoreV1Api()
     batch_v1 = client.BatchV1Api()
@@ -1680,6 +1832,21 @@ def extract_job_results(job_name: str, namespace: str) -> Dict[str, Any]:
         pod_name = pod.metadata.name
         pod_phase = pod.status.phase if pod.status else "Unknown"
         
+        # Extract study_name and trial_id from job labels for hierarchical path
+        study_name = job.metadata.labels.get("study-name", "")
+        trial_id = job.metadata.labels.get("trial-id", "")
+        
+        # Check if pod uses sidecar container (results-retriever)
+        has_sidecar = False
+        if pod.spec and pod.spec.containers:
+            has_sidecar = any(c.name == "results-retriever" for c in pod.spec.containers)
+        
+        # Construct hierarchical results file path for PVC
+        # Format: /mnt/results/{study_name}/trial_{trial_id}/benchmark-results.json
+        study_name_safe = sanitize_release_name(study_name) if study_name else "unknown"
+        trial_id_safe = sanitize_release_name(trial_id) if trial_id else "unknown"
+        results_file_path = f"/mnt/results/{study_name_safe}/trial_{trial_id_safe}/benchmark-results.json"
+        
         # Create appropriate benchmark provider
         from ..benchmarks.providers import GuideLLMBenchmark, MLPerfBenchmark
         
@@ -1691,44 +1858,101 @@ def extract_job_results(job_name: str, namespace: str) -> Dict[str, Any]:
             logger.warning(f"Unknown benchmark type {benchmark_type}, defaulting to GuideLLM")
             benchmark_provider = GuideLLMBenchmark()
         
-        # Try to extract results file from pod volume
-        # Benchmarks write results to /tmp/benchmark-results.json
-        # We need to copy it from the pod or read from logs
+        # Check if benchmark container is terminated
+        benchmark_terminated = False
+        if pod.status and pod.status.container_statuses:
+            for container_status in pod.status.container_statuses:
+                if container_status.name == "benchmark":
+                    if container_status.state and container_status.state.terminated:
+                        benchmark_terminated = True
+                        break
         
-        # First, try to exec into pod and read the results file
-        # Note: Pod must still be running for exec to work
+        # Try to exec into pod and read the results file
+        # If benchmark container is terminated and sidecar exists, use sidecar
+        container_to_use = "results-retriever" if (benchmark_terminated and has_sidecar) else "benchmark"
+        
         try:
             from kubernetes.stream import stream
-            exec_command = ["cat", "/tmp/benchmark-results.json"]
+            # First check if file exists
+            check_command = ["test", "-f", results_file_path]
+            try:
+                check_resp = stream(
+                    core_v1.connect_get_namespaced_pod_exec,
+                    pod_name,
+                    namespace,
+                    command=check_command,
+                    container=container_to_use,
+                    stderr=True,
+                    stdin=False,
+                    stdout=True,
+                    tty=False,
+                )
+            except Exception:
+                pass  # File might not exist, continue to try reading anyway
+            
+            # Read the file
+            exec_command = ["cat", results_file_path]
             resp = stream(
                 core_v1.connect_get_namespaced_pod_exec,
                 pod_name,
                 namespace,
                 command=exec_command,
-                container="benchmark",
-                stderr=True,
+                container=container_to_use,
+                stderr=False,  # Don't capture stderr to avoid mixing with stdout
                 stdin=False,
                 stdout=True,
                 tty=False,
             )
             
             if resp:
-                try:
-                    results_data = json.loads(resp)
-                    # Create temp file for parsing
-                    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-                        json.dump(results_data, f)
-                        temp_file = f.name
+                # Handle stream response - it might be a string or have channel info
+                # Extract the actual content if it's a tuple or has channel prefixes
+                content = resp
+                if isinstance(resp, tuple):
+                    # Stream returns (stdout, stderr) tuple when both are enabled
+                    content = resp[0] if resp[0] else ""
+                elif isinstance(resp, str):
+                    # Remove any channel prefixes (1: stdout, 2: stderr)
+                    # Kubernetes stream can prefix with channel numbers when stderr is enabled
+                    lines = content.split('\n')
+                    cleaned_lines = []
+                    for line in lines:
+                        # Remove channel prefix if present (format: "1:content" or "2:content")
+                        if ':' in line and len(line) > 2 and line[0].isdigit() and line[1] == ':':
+                            line = line[2:]
+                        cleaned_lines.append(line)
+                    content = '\n'.join(cleaned_lines)
+                
+                # Strip whitespace and try to parse
+                content = content.strip()
+                
+                # Remove any leading/trailing non-JSON content (error messages, etc.)
+                # Try to find JSON object boundaries
+                start_idx = content.find('{')
+                end_idx = content.rfind('}')
+                if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                    content = content[start_idx:end_idx + 1]
+                
+                if content:
                     try:
-                        benchmark_provider._results_file = temp_file
-                        results = benchmark_provider.parse_results()
-                        return results
-                    finally:
-                        os.unlink(temp_file)
-                except (json.JSONDecodeError, KeyError) as e:
-                    logger.warning(f"Failed to parse results from pod exec: {e}")
+                        results_data = json.loads(content)
+                        # Create temp file for parsing
+                        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+                            json.dump(results_data, f)
+                            temp_file = f.name
+                        try:
+                            benchmark_provider._results_file = temp_file
+                            results = benchmark_provider.parse_results()
+                            return results
+                        finally:
+                            os.unlink(temp_file)
+                    except (json.JSONDecodeError, KeyError) as e:
+                        logger.warning(
+                            f"Failed to parse results from pod exec: {e}. "
+                            f"Response preview (first 500 chars): {repr(content[:500])}"
+                        )
         except Exception as e:
-            logger.debug(f"Failed to exec into pod to read results file (pod may have terminated): {e}")
+            logger.debug(f"Failed to exec into pod to read results file from container '{container_to_use}': {e}")
         
         # Fallback: try to extract JSON from logs
         logs = core_v1.read_namespaced_pod_log(
@@ -1758,8 +1982,9 @@ def extract_job_results(job_name: str, namespace: str) -> Dict[str, Any]:
         raise RuntimeError(
             f"Could not extract benchmark results from Job {job_name}. "
             f"Results file not found in pod or logs. "
-            f"Attempted to read from pod '{pod_name}' (phase: {pod_phase}) at path '{results_file_path}'. "
-            f"Tried exec (for running pods) and kubectl cp (for terminated pods), then checked pod logs."
+            f"Attempted to read from pod '{pod_name}' (phase: {pod_phase}) at path '{results_file_path}' "
+            f"using container '{container_to_use}'. "
+            f"Tried exec into {'sidecar' if (benchmark_terminated and has_sidecar) else 'benchmark'} container, then checked pod logs."
         )
     
     except ApiException as e:

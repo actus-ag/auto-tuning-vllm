@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from dataclasses import dataclass, field
@@ -9,6 +10,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 from auto_tune_vllm.core.constraint import Constraint
 
@@ -305,6 +308,7 @@ class KubernetesConfig:
     resource_requests: Optional[Dict[str, str]] = None  # Resource requests (e.g., {"nvidia.com/gpu": "1"})
     resource_limits: Optional[Dict[str, str]] = None  # Resource limits (e.g., {"nvidia.com/gpu": "1", "memory": "32Gi"})
     model_pvc: Optional[str] = None  # PersistentVolumeClaim name for model storage (e.g., "model-pvc")
+    benchmark_pvc: Optional[str] = None  # PersistentVolumeClaim name for benchmark results storage (REQUIRED for k8s backend, no emptyDir fallback)
 
 
 @dataclass
@@ -660,10 +664,21 @@ class ConfigValidator:
         if not isinstance(raw_benchmark, dict):
             raise TypeError("Benchmark configuration must be a dictionary")
         
-        # Extract constants (all fields except "tunables")
+        # Extract constants (all fields except "tunables" and k8s-specific fields)
+        # Filter out fields that don't belong in BenchmarkConfig (e.g., benchmark_pvc belongs in k8s section)
+        k8s_only_fields = {"benchmark_pvc"}  # Fields that should be in k8s section, not benchmark section
         benchmark_constants = {
-            k: v for k, v in raw_benchmark.items() if k != "tunables"
+            k: v for k, v in raw_benchmark.items() 
+            if k != "tunables" and k not in k8s_only_fields
         }
+        
+        # Warn if k8s-only fields are found in benchmark section
+        found_k8s_fields = set(raw_benchmark.keys()) & k8s_only_fields
+        if found_k8s_fields:
+            logger.warning(
+                f"Fields {found_k8s_fields} found in benchmark section but belong in k8s section. "
+                f"Ignoring them in benchmark config. Please move them to execution.k8s section."
+            )
         
         # Extract tunables section
         benchmark_tunables_raw = raw_benchmark.get("tunables")
