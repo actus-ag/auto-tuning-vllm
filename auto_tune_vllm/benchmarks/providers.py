@@ -598,7 +598,7 @@ class MLPerfBenchmark(BenchmarkProvider):
         """Build MLPerf harness command arguments."""
         cmd = [
             "python3",
-            "harness_main.py",
+            "harness/harness_main.py",
             "--model",
             config.model,
             "--dataset-path",
@@ -625,8 +625,12 @@ class MLPerfBenchmark(BenchmarkProvider):
 
         # Scenario-specific parameters
         if config.scenario == "Offline":
+            if config.num_samples is not None and config.num_samples != config.num_samples:
+                raise ValueError(
+                    "num_samples must be equal to batch_size for Offline scenario"
+                )
             if config.batch_size is None:
-                raise ValueError("batch_size must be specified for Offline scenario")
+                config.batch_size = config.num_samples
             cmd.extend(["--batch-size", str(config.batch_size)])
         elif config.scenario == "Server":
             if config.server_target_qps is None:
@@ -636,6 +640,8 @@ class MLPerfBenchmark(BenchmarkProvider):
             cmd.extend(["--server-target-qps", str(config.server_target_qps)])
             if config.server_coalesce_queries:
                 cmd.append("--server-coalesce-queries")
+
+        self._logger.info(f"MLPerf command: {' '.join(cmd)}")
 
         return cmd
 

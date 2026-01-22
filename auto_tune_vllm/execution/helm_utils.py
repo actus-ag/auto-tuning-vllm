@@ -1194,58 +1194,72 @@ def wait_for_service_ready(
             logger.error("Cannot check ClusterIP service readiness without Job. Service may not be accessible.")
             return False
     
-    while time.time() - start_time < timeout:
-        try:
-            # For ClusterIP services, check readiness via the Kubernetes Job we created
-            if readiness_check_job_name:
-                if check_readiness_job_result(readiness_check_job_name, namespace):
-                    # Service is ready!
-                    logger.debug(f"Service ready: readiness check Job {readiness_check_job_name} succeeded")
-                    # #region agent log
-                    with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"wait-service-ready","hypothesisId":"D","location":"helm_utils.py:700","message":"Service ready via readiness check Job","data":{"job_name":readiness_check_job_name},"timestamp":int(time.time()*1000)})+"\n")
-                    # #endregion
-                    delete_readiness_check_job(readiness_check_job_name, namespace)
-                    return True
-            
-            # For non-ClusterIP services or if pod check failed, try HTTP connection
-            if health_url:
-                try:
-                    response = requests.get(health_url, timeout=5)
-                    # #region agent log
-                    with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"wait-service-ready","hypothesisId":"D","location":"helm_utils.py:740","message":"Readiness check response","data":{"status_code":response.status_code,"url":health_url},"timestamp":int(time.time()*1000)})+"\n")
-                    # #endregion
-                    # /v1/models returns 200 when server is ready
-                    if response.status_code == 200:
-                        # Verify it's a valid models response (should have JSON with "data" or "object" field)
-                        try:
-                            data = response.json()
-                            if "data" in data or "object" in data:
-                                logger.debug(f"Service ready: /v1/models returned valid response")
+    try:
+        while time.time() - start_time < timeout:
+            try:
+                # For ClusterIP services, check readiness via the Kubernetes Job we created
+                if readiness_check_job_name:
+                    if check_readiness_job_result(readiness_check_job_name, namespace):
+                        # Service is ready!
+                        logger.debug(f"Service ready: readiness check Job {readiness_check_job_name} succeeded")
+                        # #region agent log
+                        with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                            f.write(json.dumps({"sessionId":"debug-session","runId":"wait-service-ready","hypothesisId":"D","location":"helm_utils.py:700","message":"Service ready via readiness check Job","data":{"job_name":readiness_check_job_name},"timestamp":int(time.time()*1000)})+"\n")
+                        # #endregion
+                        delete_readiness_check_job(readiness_check_job_name, namespace)
+                        return True
+                
+                # For non-ClusterIP services or if pod check failed, try HTTP connection
+                if health_url:
+                    try:
+                        response = requests.get(health_url, timeout=5)
+                        # #region agent log
+                        with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                            f.write(json.dumps({"sessionId":"debug-session","runId":"wait-service-ready","hypothesisId":"D","location":"helm_utils.py:740","message":"Readiness check response","data":{"status_code":response.status_code,"url":health_url},"timestamp":int(time.time()*1000)})+"\n")
+                        # #endregion
+                        # /v1/models returns 200 when server is ready
+                        if response.status_code == 200:
+                            # Verify it's a valid models response (should have JSON with "data" or "object" field)
+                            try:
+                                data = response.json()
+                                if "data" in data or "object" in data:
+                                    logger.debug(f"Service ready: /v1/models returned valid response")
+                                    return True
+                            except (ValueError, KeyError):
+                                # If not JSON or unexpected format, still consider 200 as ready
+                                logger.debug(f"Service ready: /v1/models returned 200 (non-JSON response)")
                                 return True
-                        except (ValueError, KeyError):
-                            # If not JSON or unexpected format, still consider 200 as ready
-                            logger.debug(f"Service ready: /v1/models returned 200 (non-JSON response)")
-                            return True
-                except Exception as e:
-                    # #region agent log
-                    with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"wait-service-ready","hypothesisId":"D","location":"helm_utils.py:754","message":"Readiness check failed","data":{"error":str(e),"url":health_url},"timestamp":int(time.time()*1000)})+"\n")
-                    # #endregion
-                    pass
-        except Exception as e:
-            # #region agent log
-            with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"wait-service-ready","hypothesisId":"D","location":"helm_utils.py:761","message":"Exception in wait loop","data":{"error":str(e)},"timestamp":int(time.time()*1000)})+"\n")
-            # #endregion
-            pass
-        
-        time.sleep(2)
-    
-    # Cleanup readiness check job if it still exists
-    if readiness_check_job_name:
-        delete_readiness_check_job(readiness_check_job_name, namespace)
+                    except Exception as e:
+                        # #region agent log
+                        with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                            f.write(json.dumps({"sessionId":"debug-session","runId":"wait-service-ready","hypothesisId":"D","location":"helm_utils.py:754","message":"Readiness check failed","data":{"error":str(e),"url":health_url},"timestamp":int(time.time()*1000)})+"\n")
+                        # #endregion
+                        pass
+            except Exception as e:
+                # #region agent log
+                with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"wait-service-ready","hypothesisId":"D","location":"helm_utils.py:761","message":"Exception in wait loop","data":{"error":str(e)},"timestamp":int(time.time()*1000)})+"\n")
+                # #endregion
+                pass
+            
+            time.sleep(2)
+    except KeyboardInterrupt:
+        logger.warning("KeyboardInterrupt received during service readiness check. Cleaning up readiness check job...")
+        # Cleanup readiness check job if it still exists
+        if readiness_check_job_name:
+            try:
+                delete_readiness_check_job(readiness_check_job_name, namespace)
+                logger.info(f"Cleaned up readiness check Job '{readiness_check_job_name}' after interrupt")
+            except Exception as cleanup_e:
+                logger.error(f"Error cleaning up readiness check Job '{readiness_check_job_name}': {cleanup_e}")
+        raise
+    finally:
+        # Cleanup readiness check job if it still exists
+        if readiness_check_job_name:
+            try:
+                delete_readiness_check_job(readiness_check_job_name, namespace)
+            except Exception as cleanup_e:
+                logger.debug(f"Error cleaning up readiness check Job '{readiness_check_job_name}': {cleanup_e}")
     
     return False
 
@@ -1393,7 +1407,12 @@ def create_benchmark_job(
                                     "name": "results",
                                     "mountPath": "/tmp",
                                 },
-                            ],
+                            ] + ([
+                                {
+                                    "name": "guidellm-cache",
+                                    "mountPath": "/home/guidellm/.cache",
+                                },
+                            ] if benchmark_type == "guidellm" else []),
                         },
                     ],
                     "volumes": [
@@ -1401,7 +1420,12 @@ def create_benchmark_job(
                             "name": "results",
                             "emptyDir": {},
                         },
-                    ],
+                    ] + ([
+                        {
+                            "name": "guidellm-cache",
+                            "emptyDir": {},
+                        },
+                    ] if benchmark_type == "guidellm" else []),
                 },
             },
         },
@@ -1654,6 +1678,7 @@ def extract_job_results(job_name: str, namespace: str) -> Dict[str, Any]:
         # Get logs from the first pod
         pod = pods.items[0]
         pod_name = pod.metadata.name
+        pod_phase = pod.status.phase if pod.status else "Unknown"
         
         # Create appropriate benchmark provider
         from ..benchmarks.providers import GuideLLMBenchmark, MLPerfBenchmark
@@ -1732,7 +1757,9 @@ def extract_job_results(job_name: str, namespace: str) -> Dict[str, Any]:
         # If we get here, we couldn't extract results
         raise RuntimeError(
             f"Could not extract benchmark results from Job {job_name}. "
-            f"Results file not found in pod or logs."
+            f"Results file not found in pod or logs. "
+            f"Attempted to read from pod '{pod_name}' (phase: {pod_phase}) at path '{results_file_path}'. "
+            f"Tried exec (for running pods) and kubectl cp (for terminated pods), then checked pod logs."
         )
     
     except ApiException as e:
