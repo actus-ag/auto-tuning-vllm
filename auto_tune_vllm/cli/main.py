@@ -602,12 +602,12 @@ def run_optimization_sync(
     
     def signal_handler(signum, frame):
         """Handle SIGINT/SIGTERM to ensure cleanup."""
-        # #region agent log
-        import json
-        import time
-        with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"signal-handler","hypothesisId":"SIGNAL","location":"main.py:signal_handler","message":"Signal received","data":{"signum":signum},"timestamp":int(time.time()*1000)})+"\n")
-        # #endregion
+        # #region agent log - DISABLED
+        # import json
+        # import time
+        # with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+        #     f.write(json.dumps({"sessionId":"debug-session","runId":"signal-handler","hypothesisId":"SIGNAL","location":"main.py:signal_handler","message":"Signal received","data":{"signum":signum},"timestamp":int(time.time()*1000)})+"\n")
+        # DEBUG DISABLED: #endregion
         
         logger.warning(
             f"Signal {signum} received. Initiating cleanup..."

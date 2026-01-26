@@ -999,11 +999,19 @@ class BaseTrialController(TrialController):
                 period = 1.0
             if period <= 0:
                 period = 1.0
-            vllm_logger.info(
-                f"Starting health monitoring: checking {health_url} every "
-                f"{period}s"
-                + (" (DEBUG MODE: verbose logging enabled)" if debug else "")
-            )
+            # Detect if we're using Kubernetes backend
+            use_k8s_monitoring = hasattr(self, 'deployment_name') and hasattr(self, 'namespace')
+
+            if use_k8s_monitoring:
+                vllm_logger.info(
+                    f"Starting health monitoring: checking Deployment {self.deployment_name} pod status every {period}s"
+                    + (" (DEBUG MODE: verbose logging enabled)" if debug else "")
+                )
+            else:
+                vllm_logger.info(
+                    f"Starting health monitoring: checking {health_url} every {period}s"
+                    + (" (DEBUG MODE: verbose logging enabled)" if debug else "")
+                )
 
             # Event used to interrupt waits for responsive shutdown
             import threading as _threading
@@ -1033,30 +1041,127 @@ class BaseTrialController(TrialController):
                     break
 
                 try:
-                    response = requests.get(health_url, timeout=5)
-                    if response.status_code == 200:
-                        # TODO: Remove debug logging after verifying health
-                        # monitoring works
-                        if debug:
-                            vllm_logger.info(
-                                f"[DEBUG] Health check PASSED: "
-                                f"status={response.status_code}, "
-                                f"consecutive_failures={consecutive_failures}"
-                            )
-                        # Health check passed - reset failure counter
-                        if consecutive_failures > 0:
-                            vllm_logger.info(
-                                f"Health check recovered after "
-                                f"{consecutive_failures} failures"
-                            )
-                        consecutive_failures = 0
-                    else:
-                        consecutive_failures += 1
-                        vllm_logger.warning(
-                            f"Health check returned status {response.status_code} "
-                            f"(failure {consecutive_failures}/{max_failures})"
+                    # Kubernetes backend: Check pod status via API instead of HTTP
+                    if use_k8s_monitoring:
+                        from kubernetes import client, config
+                        from kubernetes.client.rest import ApiException
+
+                        # Load kubeconfig
+                        kubeconfig = getattr(self, 'kubeconfig', None)
+                        if kubeconfig:
+                            config.load_kube_config(config_file=kubeconfig)
+                        else:
+                            try:
+                                config.load_incluster_config()
+                            except config.ConfigException:
+                                config.load_kube_config()
+
+                        core_v1 = client.CoreV1Api()
+
+                        # Find pod for this deployment
+                        # Deployments use labels: app=vllm-server, trial-id=trial-X
+                        # NOTE: trial-id is sanitized (lowercase, underscores to hyphens)
+                        # Try to get trial_id from instance variable (set in run_trial)
+                        trial_id = getattr(self, '_current_trial_id', None)
+                        if trial_id:
+                            # Import sanitize function to match deployment's label format
+                            from .k8s_utils import sanitize_k8s_name
+                            sanitized_trial_id = sanitize_k8s_name(trial_id)
+                            label_selector = f"app=vllm-server,trial-id={sanitized_trial_id}"
+                        else:
+                            # Fallback: use generic vllm-server label
+                            label_selector = f"app=vllm-server"
+
+                        pods = core_v1.list_namespaced_pod(
+                            namespace=self.namespace,
+                            label_selector=label_selector
                         )
+
+                        # DEBUG: Log what we're searching for
+                        if debug or consecutive_failures == 0:
+                            vllm_logger.info(
+                                f"[HEALTH CHECK DEBUG] Searching namespace={self.namespace}, "
+                                f"label_selector={label_selector}, found {len(pods.items)} pods"
+                            )
+
+                        if not pods.items:
+                            consecutive_failures += 1
+                            vllm_logger.warning(
+                                f"Health check failed: No pods found with labels {label_selector} "
+                                f"(failure {consecutive_failures}/{max_failures})"
+                            )
+                        else:
+                            pod = pods.items[0]  # Get first pod
+                            pod_phase = pod.status.phase
+
+                            # Check for error states
+                            error_states = ['Failed', 'Unknown']
+                            container_errors = []
+
+                            if pod.status.container_statuses:
+                                for container_status in pod.status.container_statuses:
+                                    if container_status.state and container_status.state.waiting:
+                                        if container_status.state.waiting.reason in ['CrashLoopBackOff', 'Error', 'ImagePullBackOff']:
+                                            container_errors.append(f"{container_status.name}: {container_status.state.waiting.reason}")
+                                    elif container_status.state and container_status.state.terminated:
+                                        if container_status.state.terminated.exit_code != 0:
+                                            container_errors.append(f"{container_status.name}: terminated with exit code {container_status.state.terminated.exit_code}")
+
+                            if pod_phase in error_states or container_errors:
+                                consecutive_failures += 1
+                                error_msg = f"pod phase={pod_phase}"
+                                if container_errors:
+                                    error_msg += f", containers={', '.join(container_errors)}"
+                                vllm_logger.warning(
+                                    f"Health check failed: {error_msg} "
+                                    f"(failure {consecutive_failures}/{max_failures})"
+                                )
+                            elif pod_phase == 'Running':
+                                # Pod is healthy
+                                if debug:
+                                    vllm_logger.info(
+                                        f"[DEBUG] Health check PASSED: pod {pod.metadata.name} is Running, "
+                                        f"consecutive_failures={consecutive_failures}"
+                                    )
+                                if consecutive_failures > 0:
+                                    vllm_logger.info(
+                                        f"Health check recovered after {consecutive_failures} failures"
+                                    )
+                                consecutive_failures = 0
+                            else:
+                                # Pod in transitional state (Pending, etc.) - don't count as failure
+                                if debug:
+                                    vllm_logger.info(
+                                        f"[DEBUG] Health check: pod phase={pod_phase} (transitional, not counting as failure)"
+                                    )
+
+                    # Local/Docker backends: HTTP health check
+                    else:
+                        response = requests.get(health_url, timeout=5)
+                        if response.status_code == 200:
+                            # TODO: Remove debug logging after verifying health
+                            # monitoring works
+                            if debug:
+                                vllm_logger.info(
+                                    f"[DEBUG] Health check PASSED: "
+                                    f"status={response.status_code}, "
+                                    f"consecutive_failures={consecutive_failures}"
+                                )
+                            # Health check passed - reset failure counter
+                            if consecutive_failures > 0:
+                                vllm_logger.info(
+                                    f"Health check recovered after "
+                                    f"{consecutive_failures} failures"
+                                )
+                            consecutive_failures = 0
+                        else:
+                            consecutive_failures += 1
+                            vllm_logger.warning(
+                                f"Health check returned status {response.status_code} "
+                                f"(failure {consecutive_failures}/{max_failures})"
+                            )
                 except requests.exceptions.RequestException as e:
+                    # HTTP health check failed (local/docker backends only)
                     consecutive_failures += 1
                     # TODO: Remove debug logging after verifying health
                     # monitoring works
@@ -1068,6 +1173,7 @@ class BaseTrialController(TrialController):
                         log_msg = f"[DEBUG] Health check FAILED: {log_msg}"
                     vllm_logger.warning(log_msg)
                 except Exception as e:
+                    # Kubernetes API errors or other unexpected errors
                     consecutive_failures += 1
                     # TODO: Remove debug logging after verifying health
                     # monitoring works
@@ -1380,15 +1486,16 @@ class RayWorkerTrialController(BaseTrialController):
 class HelmTrialController(BaseTrialController):
     """Helm-based Kubernetes trial controller."""
 
-    def __init__(self, release_name: str, namespace: str = "default", benchmark_image: Optional[str] = None, helm_config: Optional[Dict[str, Any]] = None, benchmark_pvc: Optional[str] = None):
+    def __init__(self, release_name: str, namespace: str = "default", benchmark_image: Optional[str] = None, helm_config: Optional[Dict[str, Any]] = None, benchmark_pvc: Optional[str] = None, model_pvc: Optional[str] = None):
         """Initialize Helm trial controller.
-        
+
         Args:
             release_name: Helm release name
             namespace: Kubernetes namespace
             benchmark_image: Container image for benchmark Jobs
             helm_config: Helm configuration dictionary (for full stack deployment checks)
             benchmark_pvc: PersistentVolumeClaim name for benchmark results storage
+            model_pvc: PersistentVolumeClaim name for model and dataset storage
         """
         super().__init__()
         self.release_name = release_name
@@ -1396,6 +1503,7 @@ class HelmTrialController(BaseTrialController):
         self.benchmark_image = benchmark_image
         self.helm_config = helm_config or {}
         self.benchmark_pvc = benchmark_pvc
+        self.model_pvc = model_pvc
         self.server_url: Optional[str] = None
         self.benchmark_job_name: Optional[str] = None
 
@@ -1485,17 +1593,17 @@ class HelmTrialController(BaseTrialController):
         # Get service URL from Helm release
         # Pass helm_config if available to check for full stack deployment
         helm_config = getattr(self, 'helm_config', None)
-        # #region agent log
-        import json
-        import time
-        with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"trial-controller","hypothesisId":"A","location":"trial_controller.py:1425","message":"About to call get_service_url","data":{"release_name":self.release_name,"namespace":self.namespace,"helm_config":str(helm_config)},"timestamp":int(time.time()*1000)})+"\n")
-        # #endregion
+        # #region agent log - DISABLED
+        # import json
+        # import time
+        # with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+        #     f.write(json.dumps({"sessionId":"debug-session","runId":"trial-controller","hypothesisId":"A","location":"trial_controller.py:1425","message":"About to call get_service_url","data":{"release_name":self.release_name,"namespace":self.namespace,"helm_config":str(helm_config)},"timestamp":int(time.time()*1000)})+"\n")
+        # DEBUG DISABLED: #endregion
         self.server_url = get_service_url(self.release_name, self.namespace, helm_config)
-        # #region agent log
-        with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"trial-controller","hypothesisId":"A","location":"trial_controller.py:1430","message":"get_service_url returned","data":{"server_url":self.server_url},"timestamp":int(time.time()*1000)})+"\n")
-        # #endregion
+        # #region agent log - DISABLED
+        # with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+        #     f.write(json.dumps({"sessionId":"debug-session","runId":"trial-controller","hypothesisId":"A","location":"trial_controller.py:1430","message":"get_service_url returned","data":{"server_url":self.server_url},"timestamp":int(time.time()*1000)})+"\n")
+        # DEBUG DISABLED: #endregion
         vllm_logger.info(f"vLLM server URL: {self.server_url}")
         
         # Wait for service to be ready
@@ -1548,7 +1656,7 @@ class HelmTrialController(BaseTrialController):
         
         # Create benchmark Job
         self.benchmark_job_name = create_benchmark_job(
-            trial_config, self.server_url, self.namespace, benchmark_image, kubeconfig=None, benchmark_pvc=self.benchmark_pvc
+            trial_config, self.server_url, self.namespace, benchmark_image, kubeconfig=None, benchmark_pvc=self.benchmark_pvc, model_pvc=self.model_pvc
         )
         
         controller_logger.info(f"Created benchmark Job: {self.benchmark_job_name}")
@@ -1712,13 +1820,18 @@ class HelmTrialController(BaseTrialController):
                 error_type=error_type,
             )
         finally:
+            # Stop health monitoring first
+            controller_logger.info("Trial Controller: Stopping health monitoring...")
+            self._stop_health_monitoring()
+            controller_logger.debug("Trial Controller: Health monitoring stopped")
+
             # Cleanup benchmark Job
             if self.benchmark_job_name:
                 try:
                     delete_benchmark_job(self.benchmark_job_name, self.namespace)
                 except Exception as e:
                     controller_logger.warning(f"Failed to delete benchmark Job: {e}")
-            
+
             self._flush_trial_logs(trial_config.trial_id)
             # Note: Helm release cleanup is handled by backend
 
@@ -1741,9 +1854,10 @@ class KubernetesTrialController(BaseTrialController):
         service_port: int = 8000,
         kubeconfig: Optional[str] = None,
         benchmark_pvc: Optional[str] = None,
+        model_pvc: Optional[str] = None,
     ):
         """Initialize Kubernetes trial controller.
-        
+
         Args:
             deployment_name: Kubernetes Deployment name
             service_name: Kubernetes Service name
@@ -1753,6 +1867,7 @@ class KubernetesTrialController(BaseTrialController):
             service_port: Service port
             kubeconfig: Path to kubeconfig file
             benchmark_pvc: PersistentVolumeClaim name for benchmark results storage
+            model_pvc: PersistentVolumeClaim name for model and dataset storage
         """
         super().__init__()
         self.deployment_name = deployment_name
@@ -1763,6 +1878,7 @@ class KubernetesTrialController(BaseTrialController):
         self.service_port = service_port
         self.kubeconfig = kubeconfig
         self.benchmark_pvc = benchmark_pvc
+        self.model_pvc = model_pvc
         self.server_url: Optional[str] = None
         self.benchmark_job_name: Optional[str] = None
 
@@ -1905,7 +2021,7 @@ class KubernetesTrialController(BaseTrialController):
         
         # Create benchmark Job
         self.benchmark_job_name = create_benchmark_job(
-            trial_config, self.server_url, self.namespace, benchmark_image or self.benchmark_image, self.kubeconfig, benchmark_pvc=self.benchmark_pvc
+            trial_config, self.server_url, self.namespace, benchmark_image or self.benchmark_image, self.kubeconfig, benchmark_pvc=self.benchmark_pvc, model_pvc=self.model_pvc
         )
         
         controller_logger.info(f"Created benchmark Job: {self.benchmark_job_name}")
@@ -1964,12 +2080,16 @@ class KubernetesTrialController(BaseTrialController):
         from .helm_utils import delete_benchmark_job
         
         execution_info = ExecutionInfo()
+
+        # Store trial_id for health monitoring label selector
+        self._current_trial_id = trial_config.trial_id
+
         controller_logger = self._get_trial_logger("controller")
         controller_logger.info(
             f"Running trial {trial_config.trial_id} "
             f"with parameters: {trial_config.parameters}"
         )
-        
+
         try:
             # Setup trial-specific logging
             self._setup_trial_logging(trial_config)
@@ -2084,13 +2204,18 @@ class KubernetesTrialController(BaseTrialController):
                 error_type=error_type,
             )
         finally:
+            # Stop health monitoring first
+            controller_logger.info("Trial Controller: Stopping health monitoring...")
+            self._stop_health_monitoring()
+            controller_logger.debug("Trial Controller: Health monitoring stopped")
+
             # Cleanup benchmark Job
             if self.benchmark_job_name:
                 try:
                     delete_benchmark_job(self.benchmark_job_name, self.namespace)
                 except Exception as e:
                     controller_logger.warning(f"Failed to delete benchmark Job: {e}")
-            
+
             self._flush_trial_logs(trial_config.trial_id)
             # Note: Kubernetes Deployment/Service cleanup is handled by backend
 

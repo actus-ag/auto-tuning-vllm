@@ -1124,7 +1124,8 @@ class HelmExecutionBackend(ExecutionBackend):
             # Create Helm trial controller and run in executor
             benchmark_image = self.helm_config.get("benchmark_image")
             benchmark_pvc = self.helm_config.get("benchmark_pvc")
-            controller = HelmTrialController(release_name, self.namespace, benchmark_image, self.helm_config, benchmark_pvc=benchmark_pvc)
+            model_pvc = self.helm_config.get("model_pvc")
+            controller = HelmTrialController(release_name, self.namespace, benchmark_image, self.helm_config, benchmark_pvc=benchmark_pvc, model_pvc=model_pvc)
             executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
             future = executor.submit(controller.run_trial, trial_config)
             
@@ -1275,42 +1276,42 @@ class HelmExecutionBackend(ExecutionBackend):
         2. Also searches for and uninstalls ALL Helm releases matching the study name pattern
            (to catch releases from previous runs or orphaned releases)
         """
-        # #region agent log
+        # DEBUG DISABLED: #region agent log
         import json
         import time
-        with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1263","message":"Starting cleanup_all_trials","data":{"active_trials_count":len(self.active_trials),"active_trials_keys":list(self.active_trials.keys()),"study_name":self.study_name},"timestamp":int(time.time()*1000)})+"\n")
-        # #endregion
+        # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+            # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1263","message":"Starting cleanup_all_trials","data":{"active_trials_count":len(self.active_trials),"active_trials_keys":list(self.active_trials.keys()),"study_name":self.study_name},"timestamp":int(time.time()*1000)})+"\n")
+        # DEBUG DISABLED: #endregion
         
         # Step 1: Clean up tracked active trials
         if self.active_trials:
             logger.info(f"Cleaning up {len(self.active_trials)} tracked active trial(s)")
-            # #region agent log
-            with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1275","message":"Cleaning up tracked active trials","data":{"count":len(self.active_trials)},"timestamp":int(time.time()*1000)})+"\n")
-            # #endregion
+            # DEBUG DISABLED: #region agent log
+            # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1275","message":"Cleaning up tracked active trials","data":{"count":len(self.active_trials)},"timestamp":int(time.time()*1000)})+"\n")
+            # DEBUG DISABLED: #endregion
             
             for trial_id, (release_name, future, executor) in list(self.active_trials.items()):
                 try:
-                    # #region agent log
-                    with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1281","message":"Processing trial cleanup","data":{"trial_id":trial_id,"release_name":release_name},"timestamp":int(time.time()*1000)})+"\n")
-                    # #endregion
+                    # DEBUG DISABLED: #region agent log
+                    # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                        # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1281","message":"Processing trial cleanup","data":{"trial_id":trial_id,"release_name":release_name},"timestamp":int(time.time()*1000)})+"\n")
+                    # DEBUG DISABLED: #endregion
                     
                     # Shutdown executor
                     if executor:
                         executor.shutdown(wait=False)
-                        # #region agent log
-                        with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                            f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1287","message":"Executor shutdown","data":{"trial_id":trial_id},"timestamp":int(time.time()*1000)})+"\n")
-                        # #endregion
+                        # DEBUG DISABLED: #region agent log
+                        # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                            # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1287","message":"Executor shutdown","data":{"trial_id":trial_id},"timestamp":int(time.time()*1000)})+"\n")
+                        # DEBUG DISABLED: #endregion
                     
                     # Uninstall Helm release
                     logger.info(f"Uninstalling Helm release: {release_name}")
-                    # #region agent log
-                    with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1293","message":"Uninstalling Helm release","data":{"release_name":release_name,"namespace":self.namespace},"timestamp":int(time.time()*1000)})+"\n")
-                    # #endregion
+                    # DEBUG DISABLED: #region agent log
+                    # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                        # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1293","message":"Uninstalling Helm release","data":{"release_name":release_name,"namespace":self.namespace},"timestamp":int(time.time()*1000)})+"\n")
+                    # DEBUG DISABLED: #endregion
                     
                     result = subprocess.run(
                         ["helm", "uninstall", release_name, "--namespace", self.namespace],
@@ -1319,10 +1320,10 @@ class HelmExecutionBackend(ExecutionBackend):
                         text=True,
                     )
                     
-                    # #region agent log
-                    with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1301","message":"Helm uninstall result","data":{"release_name":release_name,"returncode":result.returncode,"stdout":result.stdout[:200] if result.stdout else "","stderr":result.stderr[:200] if result.stderr else ""},"timestamp":int(time.time()*1000)})+"\n")
-                    # #endregion
+                    # DEBUG DISABLED: #region agent log
+                    # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                        # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1301","message":"Helm uninstall result","data":{"release_name":release_name,"returncode":result.returncode,"stdout":result.stdout[:200] if result.stdout else "","stderr":result.stderr[:200] if result.stderr else ""},"timestamp":int(time.time()*1000)})+"\n")
+                    # DEBUG DISABLED: #endregion
                     
                     if result.returncode != 0:
                         logger.warning(
@@ -1334,10 +1335,10 @@ class HelmExecutionBackend(ExecutionBackend):
                     
                 except Exception as e:
                     logger.error(f"Error cleaning up trial {trial_id}: {e}", exc_info=True)
-                    # #region agent log
-                    with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1313","message":"Error during cleanup","data":{"trial_id":trial_id,"error":str(e)},"timestamp":int(time.time()*1000)})+"\n")
-                    # #endregion
+                    # DEBUG DISABLED: #region agent log
+                    # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                        # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1313","message":"Error during cleanup","data":{"trial_id":trial_id,"error":str(e)},"timestamp":int(time.time()*1000)})+"\n")
+                    # DEBUG DISABLED: #endregion
             
             self.active_trials.clear()
         
@@ -1345,10 +1346,10 @@ class HelmExecutionBackend(ExecutionBackend):
         # This catches orphaned releases from previous runs
         if self.study_name:
             logger.info(f"Searching for orphaned Helm releases matching study: {self.study_name}")
-            # #region agent log
-            with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1324","message":"Searching for orphaned releases","data":{"study_name":self.study_name},"timestamp":int(time.time()*1000)})+"\n")
-            # #endregion
+            # DEBUG DISABLED: #region agent log
+            # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1324","message":"Searching for orphaned releases","data":{"study_name":self.study_name},"timestamp":int(time.time()*1000)})+"\n")
+            # DEBUG DISABLED: #endregion
             
             try:
                 # List all Helm releases in namespace
@@ -1364,20 +1365,20 @@ class HelmExecutionBackend(ExecutionBackend):
                     # Find releases that start with study name
                     study_releases = [r for r in releases if r.startswith(self.study_name)]
                     
-                    # #region agent log
-                    with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1338","message":"Found matching releases","data":{"total_releases":len(releases),"study_releases":study_releases},"timestamp":int(time.time()*1000)})+"\n")
-                    # #endregion
+                    # DEBUG DISABLED: #region agent log
+                    # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                        # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1338","message":"Found matching releases","data":{"total_releases":len(releases),"study_releases":study_releases},"timestamp":int(time.time()*1000)})+"\n")
+                    # DEBUG DISABLED: #endregion
                     
                     if study_releases:
                         logger.info(f"Found {len(study_releases)} orphaned Helm release(s) matching study name")
                         for release in study_releases:
                             try:
                                 logger.info(f"Uninstalling orphaned Helm release: {release}")
-                                # #region agent log
-                                with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                                    f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1346","message":"Uninstalling orphaned release","data":{"release_name":release},"timestamp":int(time.time()*1000)})+"\n")
-                                # #endregion
+                                # DEBUG DISABLED: #region agent log
+                                # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                                    # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1346","message":"Uninstalling orphaned release","data":{"release_name":release},"timestamp":int(time.time()*1000)})+"\n")
+                                # DEBUG DISABLED: #endregion
                                 
                                 uninstall_result = subprocess.run(
                                     ["helm", "uninstall", release, "--namespace", self.namespace],
@@ -1386,10 +1387,10 @@ class HelmExecutionBackend(ExecutionBackend):
                                     text=True,
                                 )
                                 
-                                # #region agent log
-                                with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                                    f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1354","message":"Orphaned release uninstall result","data":{"release_name":release,"returncode":uninstall_result.returncode,"stdout":uninstall_result.stdout[:200] if uninstall_result.stdout else "","stderr":uninstall_result.stderr[:200] if uninstall_result.stderr else ""},"timestamp":int(time.time()*1000)})+"\n")
-                                # #endregion
+                                # DEBUG DISABLED: #region agent log
+                                # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                                    # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1354","message":"Orphaned release uninstall result","data":{"release_name":release,"returncode":uninstall_result.returncode,"stdout":uninstall_result.stdout[:200] if uninstall_result.stdout else "","stderr":uninstall_result.stderr[:200] if uninstall_result.stderr else ""},"timestamp":int(time.time()*1000)})+"\n")
+                                # DEBUG DISABLED: #endregion
                                 
                                 if uninstall_result.returncode == 0:
                                     logger.info(f"Successfully uninstalled orphaned Helm release: {release}")
@@ -1400,26 +1401,26 @@ class HelmExecutionBackend(ExecutionBackend):
                                     )
                             except Exception as e:
                                 logger.error(f"Error uninstalling orphaned release {release}: {e}", exc_info=True)
-                                # #region agent log
-                                with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                                    f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1366","message":"Error uninstalling orphaned release","data":{"release_name":release,"error":str(e)},"timestamp":int(time.time()*1000)})+"\n")
-                                # #endregion
+                                # DEBUG DISABLED: #region agent log
+                                # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                                    # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1366","message":"Error uninstalling orphaned release","data":{"release_name":release,"error":str(e)},"timestamp":int(time.time()*1000)})+"\n")
+                                # DEBUG DISABLED: #endregion
                     else:
                         logger.debug(f"No orphaned Helm releases found matching study: {self.study_name}")
                 else:
                     logger.debug(f"Could not list Helm releases: {result.stderr or result.stdout}")
             except Exception as e:
                 logger.warning(f"Error searching for orphaned Helm releases: {e}", exc_info=True)
-                # #region agent log
-                with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1375","message":"Error searching for orphaned releases","data":{"error":str(e)},"timestamp":int(time.time()*1000)})+"\n")
-                # #endregion
+                # DEBUG DISABLED: #region agent log
+                # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                    # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1375","message":"Error searching for orphaned releases","data":{"error":str(e)},"timestamp":int(time.time()*1000)})+"\n")
+                # DEBUG DISABLED: #endregion
         
         logger.info("Completed cleanup of all active trials and orphaned releases")
-        # #region agent log
-        with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1380","message":"Cleanup completed","data":{},"timestamp":int(time.time()*1000)})+"\n")
-        # #endregion
+        # DEBUG DISABLED: #region agent log
+        # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+            # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"cleanup-all-trials","hypothesisId":"CLEANUP","location":"backends.py:1380","message":"Cleanup completed","data":{},"timestamp":int(time.time()*1000)})+"\n")
+        # DEBUG DISABLED: #endregion
 
     def shutdown(self):
         """Shutdown Helm execution backend."""
@@ -1579,6 +1580,7 @@ class KubernetesExecutionBackend(ExecutionBackend):
         # Create trial controller
         benchmark_image = self.k8s_config.get("benchmark_image")
         benchmark_pvc = self.k8s_config.get("benchmark_pvc")
+        model_pvc = self.k8s_config.get("model_pvc")
         controller = KubernetesTrialController(
             deployment_name=deployment_name,
             service_name=service_name,
@@ -1588,6 +1590,7 @@ class KubernetesExecutionBackend(ExecutionBackend):
             service_port=service_port,
             kubeconfig=self.kubeconfig,
             benchmark_pvc=benchmark_pvc,
+            model_pvc=model_pvc,
         )
         
         # Submit trial execution in thread pool

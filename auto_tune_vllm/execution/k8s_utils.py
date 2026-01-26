@@ -94,6 +94,12 @@ def create_vllm_deployment(
     model_mount_path = "/mnt/models"
     if model_pvc:
         env_vars["HF_HOME"] = model_mount_path
+        # Set cache directories to writable PVC location to avoid OpenShift permission issues
+        # flashinfer and vllm need writable cache directories
+        env_vars["HOME"] = f"{model_mount_path}/.cache/home"
+        env_vars["XDG_CACHE_HOME"] = f"{model_mount_path}/.cache"
+        env_vars["FLASHINFER_WORKSPACE_DIR"] = f"{model_mount_path}/.cache/flashinfer"
+        env_vars["VLLM_CACHE_ROOT"] = f"{model_mount_path}/.cache/vllm"
     
     # Build container command
     cmd = ["python3", "-m", "vllm.entrypoints.openai.api_server"]
@@ -103,7 +109,9 @@ def create_vllm_deployment(
     model_in_args = any("--model" in arg for arg in args)
     if not model_in_args and trial_config.benchmark_config:
         args = ["--model", trial_config.benchmark_config.model] + args
-    
+
+    logger.info(f"vLLM arguments: {' '.join(args)}")
+
     try:
         # Create Deployment using proper Kubernetes client objects
         deployment = client.V1Deployment(
@@ -357,10 +365,10 @@ def get_service_url(
                     ip = ingress.ip or ingress.hostname
                     if ip:
                         port = service.spec.ports[0].port
-                        return f"http://{ip}:{port}/v1"
+                        return f"http://{ip}:{port}"
                 time.sleep(5)
             raise RuntimeError(f"LoadBalancer IP not assigned after {max_wait}s")
-        
+
         elif service_type == "NodePort":
             # Get node IP (simplified - uses first node)
             nodes = core_v1.list_node()
@@ -368,12 +376,12 @@ def get_service_url(
                 raise RuntimeError("No nodes found in cluster")
             node_ip = nodes.items[0].status.addresses[0].address
             node_port = service.spec.ports[0].node_port
-            return f"http://{node_ip}:{node_port}/v1"
-        
+            return f"http://{node_ip}:{node_port}"
+
         else:  # ClusterIP
             # Return cluster-internal URL
             port = service.spec.ports[0].port
-            return f"http://{service_name}.{namespace}.svc.cluster.local:{port}/v1"
+            return f"http://{service_name}.{namespace}.svc.cluster.local:{port}"
     
     except ApiException as e:
         raise RuntimeError(f"Failed to get service URL: {e}")

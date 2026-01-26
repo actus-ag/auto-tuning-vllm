@@ -519,30 +519,30 @@ def get_service_url(release_name: str, namespace: str, helm_config: dict = None)
         logger.error("kubernetes library not available")
         raise RuntimeError("kubernetes library required for Helm backend")
     
-    # #region agent log
-    with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-        f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"A","location":"helm_utils.py:334","message":"Starting get_service_url","data":{"release_name":release_name,"namespace":namespace,"helm_config":str(helm_config)},"timestamp":int(time.time()*1000)})+"\n")
-    # #endregion
+    # DEBUG DISABLED: #region agent log
+    # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+        # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"A","location":"helm_utils.py:334","message":"Starting get_service_url","data":{"release_name":release_name,"namespace":namespace,"helm_config":str(helm_config)},"timestamp":int(time.time()*1000)})+"\n")
+    # DEBUG DISABLED: #endregion
     
     # For full stack deployment, use inference gateway service (LoadBalancer/NodePort)
     if helm_config and helm_config.get("deploy_full_stack", False):
-        # #region agent log
-        with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"GAIE","location":"helm_utils.py:340","message":"Checking for full stack deployment","data":{"deploy_full_stack":True},"timestamp":int(time.time()*1000)})+"\n")
-        # #endregion
+        # DEBUG DISABLED: #region agent log
+        # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+            # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"GAIE","location":"helm_utils.py:340","message":"Checking for full stack deployment","data":{"deploy_full_stack":True},"timestamp":int(time.time()*1000)})+"\n")
+        # DEBUG DISABLED: #endregion
         release_name_postfix = helm_config.get("release_name_postfix", "kv-events")
         
         try:
-            # #region agent log
-            with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"GAIE","location":"helm_utils.py:344","message":"Loading kubeconfig for gateway service","data":{},"timestamp":int(time.time()*1000)})+"\n")
-            # #endregion
+            # DEBUG DISABLED: #region agent log
+            # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"GAIE","location":"helm_utils.py:344","message":"Loading kubeconfig for gateway service","data":{},"timestamp":int(time.time()*1000)})+"\n")
+            # DEBUG DISABLED: #endregion
             config.load_incluster_config()
         except config.ConfigException:
-            # #region agent log
-            with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"GAIE","location":"helm_utils.py:348","message":"Loading kubeconfig from file","data":{},"timestamp":int(time.time()*1000)})+"\n")
-            # #endregion
+            # DEBUG DISABLED: #region agent log
+            # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"GAIE","location":"helm_utils.py:348","message":"Loading kubeconfig from file","data":{},"timestamp":int(time.time()*1000)})+"\n")
+            # DEBUG DISABLED: #endregion
             config.load_kube_config()
         
         v1 = client.CoreV1Api()
@@ -559,16 +559,16 @@ def get_service_url(release_name: str, namespace: str, helm_config: dict = None)
         gateway_service_name = None
         for name in gateway_service_names:
             try:
-                # #region agent log
-                with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"GAIE","location":"helm_utils.py:371","message":"Trying gateway service name","data":{"service_name":name,"namespace":namespace},"timestamp":int(time.time()*1000)})+"\n")
-                # #endregion
+                # DEBUG DISABLED: #region agent log
+                # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                    # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"GAIE","location":"helm_utils.py:371","message":"Trying gateway service name","data":{"service_name":name,"namespace":namespace},"timestamp":int(time.time()*1000)})+"\n")
+                # DEBUG DISABLED: #endregion
                 service = v1.read_namespaced_service(name=name, namespace=namespace)
                 gateway_service_name = name
-                # #region agent log
-                with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"GAIE","location":"helm_utils.py:378","message":"Found gateway service","data":{"service_name":gateway_service_name},"timestamp":int(time.time()*1000)})+"\n")
-                # #endregion
+                # DEBUG DISABLED: #region agent log
+                # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                    # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"GAIE","location":"helm_utils.py:378","message":"Found gateway service","data":{"service_name":gateway_service_name},"timestamp":int(time.time()*1000)})+"\n")
+                # DEBUG DISABLED: #endregion
                 break
             except ApiException as e:
                 if e.status == 404:
@@ -580,10 +580,10 @@ def get_service_url(release_name: str, namespace: str, helm_config: dict = None)
         # If not found by known patterns, search all services for pattern matching .*-inference-gateway(-.*)?$
         # This matches the approach in llm-d docs: select(.metadata.name | test(".*-inference-gateway(-.*)?$"))
         if service is None:
-            # #region agent log
-            with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"GAIE","location":"helm_utils.py:390","message":"Searching all services for inference-gateway pattern","data":{"namespace":namespace},"timestamp":int(time.time()*1000)})+"\n")
-            # #endregion
+            # DEBUG DISABLED: #region agent log
+            # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"GAIE","location":"helm_utils.py:390","message":"Searching all services for inference-gateway pattern","data":{"namespace":namespace},"timestamp":int(time.time()*1000)})+"\n")
+            # DEBUG DISABLED: #endregion
             import re
             services = v1.list_namespaced_service(namespace=namespace)
             gateway_pattern = re.compile(r".*-inference-gateway(-.*)?$")
@@ -591,10 +591,10 @@ def get_service_url(release_name: str, namespace: str, helm_config: dict = None)
                 if gateway_pattern.match(svc.metadata.name):
                     service = svc
                     gateway_service_name = svc.metadata.name
-                    # #region agent log
-                    with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"GAIE","location":"helm_utils.py:400","message":"Found gateway service by pattern match","data":{"service_name":gateway_service_name},"timestamp":int(time.time()*1000)})+"\n")
-                    # #endregion
+                    # DEBUG DISABLED: #region agent log
+                    # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                        # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"GAIE","location":"helm_utils.py:400","message":"Found gateway service by pattern match","data":{"service_name":gateway_service_name},"timestamp":int(time.time()*1000)})+"\n")
+                    # DEBUG DISABLED: #endregion
                     break
         
         if service:
@@ -610,27 +610,27 @@ def get_service_url(release_name: str, namespace: str, helm_config: dict = None)
             if service.spec.type == "LoadBalancer" and service.status.load_balancer.ingress:
                 ingress = service.status.load_balancer.ingress[0]
                 host = ingress.hostname or ingress.ip
-                # #region agent log
-                with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"GAIE","location":"helm_utils.py:365","message":"Using gateway LoadBalancer","data":{"service_name":gateway_service_name,"host":host,"port":port},"timestamp":int(time.time()*1000)})+"\n")
-                # #endregion
+                # DEBUG DISABLED: #region agent log
+                # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                    # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"GAIE","location":"helm_utils.py:365","message":"Using gateway LoadBalancer","data":{"service_name":gateway_service_name,"host":host,"port":port},"timestamp":int(time.time()*1000)})+"\n")
+                # DEBUG DISABLED: #endregion
                 return f"http://{host}:{port}/v1"
             elif service.spec.type == "NodePort" and service.spec.ports:
                 node_port = service.spec.ports[0].node_port
                 # For NodePort, we'd need node IP - use service DNS instead
-                # #region agent log
-                with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"GAIE","location":"helm_utils.py:372","message":"Using gateway NodePort","data":{"service_name":gateway_service_name,"node_port":node_port,"port":port},"timestamp":int(time.time()*1000)})+"\n")
-                # #endregion
+                # DEBUG DISABLED: #region agent log
+                # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                    # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"GAIE","location":"helm_utils.py:372","message":"Using gateway NodePort","data":{"service_name":gateway_service_name,"node_port":node_port,"port":port},"timestamp":int(time.time()*1000)})+"\n")
+                # DEBUG DISABLED: #endregion
                 return f"http://{gateway_service_name}.{namespace}.svc.cluster.local:{port}/v1"
             else:
                 # ClusterIP - use ClusterIP directly
                 cluster_ip = service.spec.cluster_ip
                 if cluster_ip:
-                    # #region agent log
-                    with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"GAIE","location":"helm_utils.py:380","message":"Using gateway ClusterIP","data":{"service_name":gateway_service_name,"cluster_ip":cluster_ip,"port":port},"timestamp":int(time.time()*1000)})+"\n")
-                    # #endregion
+                    # DEBUG DISABLED: #region agent log
+                    # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                        # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"GAIE","location":"helm_utils.py:380","message":"Using gateway ClusterIP","data":{"service_name":gateway_service_name,"cluster_ip":cluster_ip,"port":port},"timestamp":int(time.time()*1000)})+"\n")
+                    # DEBUG DISABLED: #endregion
                     return f"http://{cluster_ip}:{port}/v1"
                 return f"http://{gateway_service_name}.{namespace}.svc.cluster.local:{port}/v1"
         else:
@@ -642,10 +642,10 @@ def get_service_url(release_name: str, namespace: str, helm_config: dict = None)
     
     try:
         # Load kubeconfig
-        # #region agent log
-        with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"A","location":"helm_utils.py:375","message":"Loading kubeconfig for modelservice","data":{},"timestamp":int(time.time()*1000)})+"\n")
-        # #endregion
+        # DEBUG DISABLED: #region agent log
+        # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+            # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"A","location":"helm_utils.py:375","message":"Loading kubeconfig for modelservice","data":{},"timestamp":int(time.time()*1000)})+"\n")
+        # DEBUG DISABLED: #endregion
         try:
             config.load_incluster_config()
         except config.ConfigException:
@@ -655,16 +655,16 @@ def get_service_url(release_name: str, namespace: str, helm_config: dict = None)
         
         # Try to find service created by Helm release
         # Helm typically creates services with release name or app name
-        # #region agent log
-        with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"A","location":"helm_utils.py:386","message":"Listing services in namespace","data":{"namespace":namespace},"timestamp":int(time.time()*1000)})+"\n")
-        # #endregion
+        # DEBUG DISABLED: #region agent log
+        # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+            # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"A","location":"helm_utils.py:386","message":"Listing services in namespace","data":{"namespace":namespace},"timestamp":int(time.time()*1000)})+"\n")
+        # DEBUG DISABLED: #endregion
         services = v1.list_namespaced_service(namespace=namespace)
         
-        # #region agent log
-        with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"A","location":"helm_utils.py:310","message":"Listed services","data":{"service_count":len(services.items),"service_names":[s.metadata.name for s in services.items]},"timestamp":int(time.time()*1000)})+"\n")
-        # #endregion
+        # DEBUG DISABLED: #region agent log
+        # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+            # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"A","location":"helm_utils.py:310","message":"Listed services","data":{"service_count":len(services.items),"service_names":[s.metadata.name for s in services.items]},"timestamp":int(time.time()*1000)})+"\n")
+        # DEBUG DISABLED: #endregion
         
         for service in services.items:
             # Check if service belongs to this release
@@ -679,10 +679,10 @@ def get_service_url(release_name: str, namespace: str, helm_config: dict = None)
                 if service.spec.ports:
                     port = service.spec.ports[0].port
                 
-                # #region agent log
-                with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"A","location":"helm_utils.py:320","message":"Found matching service","data":{"service_name":service.metadata.name,"port":port},"timestamp":int(time.time()*1000)})+"\n")
-                # #endregion
+                # DEBUG DISABLED: #region agent log
+                # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                    # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"A","location":"helm_utils.py:320","message":"Found matching service","data":{"service_name":service.metadata.name,"port":port},"timestamp":int(time.time()*1000)})+"\n")
+                # DEBUG DISABLED: #endregion
                 
                 # Construct URL based on service type
                 if service.spec.type == "LoadBalancer" and service.status.load_balancer.ingress:
@@ -712,10 +712,10 @@ def get_service_url(release_name: str, namespace: str, helm_config: dict = None)
                     port = service.spec.ports[0].port
                 # Use ClusterIP directly instead of DNS name for external access
                 cluster_ip = service.spec.cluster_ip
-                # #region agent log
-                with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"C","location":"helm_utils.py:352","message":"Found auto-tune-vllm service","data":{"service_name":service.metadata.name,"cluster_ip":cluster_ip,"port":port},"timestamp":int(time.time()*1000)})+"\n")
-                # #endregion
+                # DEBUG DISABLED: #region agent log
+                # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                    # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"C","location":"helm_utils.py:352","message":"Found auto-tune-vllm service","data":{"service_name":service.metadata.name,"cluster_ip":cluster_ip,"port":port},"timestamp":int(time.time()*1000)})+"\n")
+                # DEBUG DISABLED: #endregion
                 if cluster_ip:
                     return f"http://{cluster_ip}:{port}/v1"
                 # Fallback to DNS name if no ClusterIP
@@ -723,10 +723,10 @@ def get_service_url(release_name: str, namespace: str, helm_config: dict = None)
         
         # Last resort: construct expected service name (may not exist and may be too long)
         service_name = f"{release_name}-llm-d-modelservice-decode"
-        # #region agent log
-        with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"C","location":"helm_utils.py:365","message":"Using fallback service name","data":{"service_name":service_name,"port":8000},"timestamp":int(time.time()*1000)})+"\n")
-        # #endregion
+        # DEBUG DISABLED: #region agent log
+        # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+            # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"get-service-url","hypothesisId":"C","location":"helm_utils.py:365","message":"Using fallback service name","data":{"service_name":service_name,"port":8000},"timestamp":int(time.time()*1000)})+"\n")
+        # DEBUG DISABLED: #endregion
         return f"http://{service_name}.{namespace}.svc.cluster.local:8000/v1"  # Use service port 8000, not target port
     
     except ApiException as e:
@@ -874,7 +874,7 @@ exit 1
                     "containers": [
                         {
                             "name": "readiness-check",
-                            "image": "curlimages/curl:latest",  # Lightweight curl image
+                            "image": "quay.io/rh-ee-aansharm/curl:latest",  # Curl image from quay.io (avoids Docker Hub rate limits)
                             "command": ["/bin/sh", "-c"],
                             "args": [check_script],
                         },
@@ -953,12 +953,12 @@ def check_readiness_job_result(job_name: str, namespace: str) -> bool:
                     logs = core_v1.read_namespaced_pod_log(
                         name=pod_name, namespace=namespace
                     )
-                    # #region agent log
+                    # DEBUG DISABLED: #region agent log
                     import json
                     import time
-                    with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"readiness-check","hypothesisId":"D","location":"helm_utils.py:685","message":"Readiness check Job logs","data":{"job_name":job_name,"logs":logs[:500]},"timestamp":int(time.time()*1000)})+"\n")
-                    # #endregion
+                    # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                        # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"readiness-check","hypothesisId":"D","location":"helm_utils.py:685","message":"Readiness check Job logs","data":{"job_name":job_name,"logs":logs[:500]},"timestamp":int(time.time()*1000)})+"\n")
+                    # DEBUG DISABLED: #endregion
                     if "READY" in logs:
                         logger.debug(f"Readiness check Job {job_name} confirmed service is ready")
                         return True
@@ -1042,10 +1042,10 @@ def wait_for_service_ready(
         logger.error("kubernetes or requests library not available")
         return False
     
-    # #region agent log
-    with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-        f.write(json.dumps({"sessionId":"debug-session","runId":"wait-service-ready","hypothesisId":"D","location":"helm_utils.py:360","message":"Starting wait_for_service_ready","data":{"service_name":service_name,"namespace":namespace,"timeout":timeout},"timestamp":int(time.time()*1000)})+"\n")
-    # #endregion
+    # DEBUG DISABLED: #region agent log
+    # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+        # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"wait-service-ready","hypothesisId":"D","location":"helm_utils.py:360","message":"Starting wait_for_service_ready","data":{"service_name":service_name,"namespace":namespace,"timeout":timeout},"timestamp":int(time.time()*1000)})+"\n")
+    # DEBUG DISABLED: #endregion
     
     try:
         if kubeconfig:
@@ -1081,10 +1081,10 @@ def wait_for_service_ready(
             # Instead, check pod readiness via Kubernetes API
             logger.debug(f"Detected ClusterIP service ({hostname}), will check pod readiness instead of HTTP connection")
             health_url = None  # Will use pod readiness check instead
-            # #region agent log
-            with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"wait-service-ready","hypothesisId":"D","location":"helm_utils.py:603","message":"Detected ClusterIP, setting health_url=None","data":{"hostname":hostname,"is_cluster_ip":True},"timestamp":int(time.time()*1000)})+"\n")
-            # #endregion
+            # DEBUG DISABLED: #region agent log
+            # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"wait-service-ready","hypothesisId":"D","location":"helm_utils.py:603","message":"Detected ClusterIP, setting health_url=None","data":{"hostname":hostname,"is_cluster_ip":True},"timestamp":int(time.time()*1000)})+"\n")
+            # DEBUG DISABLED: #endregion
         else:
             # DNS name - try to get service object
             service_name_only = hostname.split(".")[0] if hostname else service_name
@@ -1095,10 +1095,10 @@ def wait_for_service_ready(
                     is_cluster_ip = True
                     logger.debug(f"Service '{service_name_only}' is ClusterIP, will check pod readiness instead of HTTP connection")
                     health_url = None
-                    # #region agent log
-                    with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"wait-service-ready","hypothesisId":"D","location":"helm_utils.py:613","message":"Service is ClusterIP, setting health_url=None","data":{"service_name":service_name_only,"is_cluster_ip":True},"timestamp":int(time.time()*1000)})+"\n")
-                    # #endregion
+                    # DEBUG DISABLED: #region agent log
+                    # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                        # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"wait-service-ready","hypothesisId":"D","location":"helm_utils.py:613","message":"Service is ClusterIP, setting health_url=None","data":{"service_name":service_name_only,"is_cluster_ip":True},"timestamp":int(time.time()*1000)})+"\n")
+                    # DEBUG DISABLED: #endregion
                 else:
                     # LoadBalancer or NodePort - can connect directly
                     health_url = f"http://{hostname}:{port}/v1/models"
@@ -1127,10 +1127,10 @@ def wait_for_service_ready(
                 is_cluster_ip = True
                 logger.debug(f"Service '{service_name}' is ClusterIP, will check pod readiness instead of HTTP connection")
                 health_url = None
-                # #region agent log
-                with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"wait-service-ready","hypothesisId":"D","location":"helm_utils.py:641","message":"Service is ClusterIP, setting health_url=None","data":{"service_name":service_name,"is_cluster_ip":True},"timestamp":int(time.time()*1000)})+"\n")
-                # #endregion
+                # DEBUG DISABLED: #region agent log
+                # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                    # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"wait-service-ready","hypothesisId":"D","location":"helm_utils.py:641","message":"Service is ClusterIP, setting health_url=None","data":{"service_name":service_name,"is_cluster_ip":True},"timestamp":int(time.time()*1000)})+"\n")
+                # DEBUG DISABLED: #endregion
             else:
                 # LoadBalancer or NodePort - can connect directly
                 health_url = f"http://{service_name}.{namespace}.svc.cluster.local:{port}/v1/models"
@@ -1146,10 +1146,10 @@ def wait_for_service_ready(
             # Fallback to DNS name
             health_url = f"http://{service_name}.{namespace}.svc.cluster.local:8000/v1/models"
     
-    # #region agent log
-    with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-        f.write(json.dumps({"sessionId":"debug-session","runId":"wait-service-ready","hypothesisId":"D","location":"helm_utils.py:390","message":"Determined health URL","data":{"health_url":health_url,"service_name":service_name,"is_cluster_ip":is_cluster_ip},"timestamp":int(time.time()*1000)})+"\n")
-    # #endregion
+    # DEBUG DISABLED: #region agent log
+    # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+        # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"wait-service-ready","hypothesisId":"D","location":"helm_utils.py:390","message":"Determined health URL","data":{"health_url":health_url,"service_name":service_name,"is_cluster_ip":is_cluster_ip},"timestamp":int(time.time()*1000)})+"\n")
+    # DEBUG DISABLED: #endregion
     
     # Extract service name for verification
     service_name_for_check = None
@@ -1179,10 +1179,10 @@ def wait_for_service_ready(
         if len(readiness_check_job_name) > 63:
             readiness_check_job_name = readiness_check_job_name[:63].rstrip("-")
         
-        # #region agent log
-        with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"wait-service-ready","hypothesisId":"D","location":"helm_utils.py:686","message":"Creating readiness check Job for ClusterIP service","data":{"service_url":service_name,"job_name":readiness_check_job_name},"timestamp":int(time.time()*1000)})+"\n")
-        # #endregion
+        # DEBUG DISABLED: #region agent log
+        # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+            # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"wait-service-ready","hypothesisId":"D","location":"helm_utils.py:686","message":"Creating readiness check Job for ClusterIP service","data":{"service_url":service_name,"job_name":readiness_check_job_name},"timestamp":int(time.time()*1000)})+"\n")
+        # DEBUG DISABLED: #endregion
         
         try:
             create_readiness_check_job(service_name, namespace, readiness_check_job_name)
@@ -1202,10 +1202,10 @@ def wait_for_service_ready(
                     if check_readiness_job_result(readiness_check_job_name, namespace):
                         # Service is ready!
                         logger.debug(f"Service ready: readiness check Job {readiness_check_job_name} succeeded")
-                        # #region agent log
-                        with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                            f.write(json.dumps({"sessionId":"debug-session","runId":"wait-service-ready","hypothesisId":"D","location":"helm_utils.py:700","message":"Service ready via readiness check Job","data":{"job_name":readiness_check_job_name},"timestamp":int(time.time()*1000)})+"\n")
-                        # #endregion
+                        # DEBUG DISABLED: #region agent log
+                        # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                            # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"wait-service-ready","hypothesisId":"D","location":"helm_utils.py:700","message":"Service ready via readiness check Job","data":{"job_name":readiness_check_job_name},"timestamp":int(time.time()*1000)})+"\n")
+                        # DEBUG DISABLED: #endregion
                         delete_readiness_check_job(readiness_check_job_name, namespace)
                         return True
                 
@@ -1213,10 +1213,10 @@ def wait_for_service_ready(
                 if health_url:
                     try:
                         response = requests.get(health_url, timeout=5)
-                        # #region agent log
-                        with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                            f.write(json.dumps({"sessionId":"debug-session","runId":"wait-service-ready","hypothesisId":"D","location":"helm_utils.py:740","message":"Readiness check response","data":{"status_code":response.status_code,"url":health_url},"timestamp":int(time.time()*1000)})+"\n")
-                        # #endregion
+                        # DEBUG DISABLED: #region agent log
+                        # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                            # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"wait-service-ready","hypothesisId":"D","location":"helm_utils.py:740","message":"Readiness check response","data":{"status_code":response.status_code,"url":health_url},"timestamp":int(time.time()*1000)})+"\n")
+                        # DEBUG DISABLED: #endregion
                         # /v1/models returns 200 when server is ready
                         if response.status_code == 200:
                             # Verify it's a valid models response (should have JSON with "data" or "object" field)
@@ -1230,16 +1230,16 @@ def wait_for_service_ready(
                                 logger.debug(f"Service ready: /v1/models returned 200 (non-JSON response)")
                                 return True
                     except Exception as e:
-                        # #region agent log
-                        with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                            f.write(json.dumps({"sessionId":"debug-session","runId":"wait-service-ready","hypothesisId":"D","location":"helm_utils.py:754","message":"Readiness check failed","data":{"error":str(e),"url":health_url},"timestamp":int(time.time()*1000)})+"\n")
-                        # #endregion
+                        # DEBUG DISABLED: #region agent log
+                        # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                            # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"wait-service-ready","hypothesisId":"D","location":"helm_utils.py:754","message":"Readiness check failed","data":{"error":str(e),"url":health_url},"timestamp":int(time.time()*1000)})+"\n")
+                        # DEBUG DISABLED: #endregion
                         pass
             except Exception as e:
-                # #region agent log
-                with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"wait-service-ready","hypothesisId":"D","location":"helm_utils.py:761","message":"Exception in wait loop","data":{"error":str(e)},"timestamp":int(time.time()*1000)})+"\n")
-                # #endregion
+                # DEBUG DISABLED: #region agent log
+                # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
+                    # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"wait-service-ready","hypothesisId":"D","location":"helm_utils.py:761","message":"Exception in wait loop","data":{"error":str(e)},"timestamp":int(time.time()*1000)})+"\n")
+                # DEBUG DISABLED: #endregion
                 pass
             
             time.sleep(2)
@@ -1272,15 +1272,53 @@ def _build_benchmark_env(trial_config: TrialConfig, benchmark_type: str) -> List
             "name": "GUIDELLM__LOGGING__CONSOLE_LOG_LEVEL",
             "value": trial_config.benchmark_config.logging_level
         })
-    # MLPerf doesn't require specific environment variables for now
+    elif benchmark_type == "mlperf":
+        # Enable Python debugging and verbose output
+        env.extend([
+            {"name": "PYTHONUNBUFFERED", "value": "1"},
+            {"name": "PYTHONFAULTHANDLER", "value": "1"},
+            {"name": "MPLCONFIGDIR", "value": "/tmp/matplotlib"},
+            # HuggingFace cache directories for tokenizer initialization
+            # Must match the writable cache directories created in the benchmark container
+            {"name": "HF_HOME", "value": "/tmp/.cache/huggingface"},
+            {"name": "TRANSFORMERS_CACHE", "value": "/tmp/.cache/huggingface/transformers"},
+            # AWS credentials for MLflow S3 artifact uploads
+            {
+                "name": "AWS_ACCESS_KEY_ID",
+                "valueFrom": {
+                    "secretKeyRef": {
+                        "name": "aws-credentials",
+                        "key": "AWS_ACCESS_KEY_ID"
+                    }
+                }
+            },
+            {
+                "name": "AWS_SECRET_ACCESS_KEY",
+                "valueFrom": {
+                    "secretKeyRef": {
+                        "name": "aws-credentials",
+                        "key": "AWS_SECRET_ACCESS_KEY"
+                    }
+                }
+            },
+            {
+                "name": "AWS_DEFAULT_REGION",
+                "valueFrom": {
+                    "secretKeyRef": {
+                        "name": "aws-credentials",
+                        "key": "AWS_DEFAULT_REGION"
+                    }
+                }
+            },
+        ])
     return env
 
 
 def create_benchmark_job(
-    trial_config: TrialConfig, server_url: str, namespace: str, benchmark_image: Optional[str] = None, kubeconfig: Optional[str] = None, benchmark_pvc: Optional[str] = None
+    trial_config: TrialConfig, server_url: str, namespace: str, benchmark_image: Optional[str] = None, kubeconfig: Optional[str] = None, benchmark_pvc: Optional[str] = None, model_pvc: Optional[str] = None
 ) -> str:
     """Create Kubernetes Job for benchmark execution.
-    
+
     Args:
         trial_config: Trial configuration
         server_url: vLLM server URL
@@ -1288,10 +1326,11 @@ def create_benchmark_job(
         benchmark_image: Optional container image for benchmark
         kubeconfig: Optional path to kubeconfig file
         benchmark_pvc: PersistentVolumeClaim name for benchmark results storage (REQUIRED for k8s backend)
-        
+        model_pvc: PersistentVolumeClaim name for model and dataset storage (optional, for MLPerf datasets)
+
     Returns:
         Job name
-        
+
     Raises:
         ValueError: If benchmark_pvc is not provided
     """
@@ -1439,7 +1478,8 @@ def create_benchmark_job(
                     "initContainers": [
                         {
                             "name": "create-results-dir",
-                            "image": final_image if benchmark_type == "guidellm" else "busybox:latest",  # Use GuideLLM image for guidellm, busybox for others
+                            "image": final_image,  # Use benchmark image to avoid Docker Hub rate limits
+                            "imagePullPolicy": "IfNotPresent",
                             "command": ["sh", "-c", f"mkdir -p {results_dir}"],
                             "volumeMounts": [
                                 {
@@ -1453,9 +1493,175 @@ def create_benchmark_job(
                         {
                             "name": "benchmark",
                             "image": final_image,
+                            "imagePullPolicy": "IfNotPresent",
                             **({"workingDir": working_dir} if working_dir else {}),
-                            "command": [cmd[0]] if cmd else (["python", "harness/harness_main.py"] if benchmark_type == "mlperf" else ["guidellm"]),
-                            "args": cmd[1:] if len(cmd) > 1 else [],
+                            "command": ["/bin/bash", "-c"] if benchmark_type == "mlperf" else ([cmd[0]] if cmd else ["guidellm"]),
+                            "args": [
+                                f'''
+echo "[DEBUG 1/12] Starting benchmark wrapper at $(date)"
+echo "[DEBUG 2/12] Checking dataset file..."
+ls -lh {trial_config.benchmark_config.dataset_path} 2>&1 || echo "[WARNING] Dataset file not found at {trial_config.benchmark_config.dataset_path}"
+echo "[DEBUG 3/12] Testing vLLM server connectivity..."
+python3 -c "import requests; r=requests.get('{server_url}/v1/models', timeout=5); print('vLLM OK' if r.status_code==200 else 'vLLM returned '+str(r.status_code))" 2>&1 || echo "[ERROR] vLLM unreachable"
+echo "[DEBUG 4/12] Checking MLflow connectivity..."
+python3 -c "import requests; r=requests.get('http://{trial_config.benchmark_config.mlflow_host}:5000/health', timeout=5); print('MLflow OK')" 2>&1 || echo "[WARNING] MLflow unreachable"
+echo "[DEBUG 5/12] Python environment check..."
+python3 --version
+echo "[DEBUG 6/12] Checking working directory: $(pwd)"
+ls -la harness/ | head -10
+echo "[DEBUG 7/12] Verifying dataset is readable..."
+python3 -c "
+import os
+dataset_path = '{trial_config.benchmark_config.dataset_path}'
+if dataset_path.endswith('.json'):
+    import json
+    with open(dataset_path) as f:
+        data = json.load(f)
+    print(f'Dataset OK: {{len(data)}} samples')
+elif dataset_path.endswith('.parquet'):
+    import pandas as pd
+    df = pd.read_parquet(dataset_path)
+    print(f'Dataset OK: {{len(df)}} samples')
+else:
+    print(f'Dataset file exists: {{os.path.exists(dataset_path)}}')
+" 2>&1 || echo "[ERROR] Dataset not readable"
+echo "[DEBUG 8/12] Starting harness: {" ".join(cmd)}"
+{" ".join(cmd)} 2>&1 &
+PID=$!
+echo "[DEBUG 9/12] Harness launched with PID: $PID"
+echo "[DEBUG 10/12] Monitoring harness (status every 30s)..."
+COUNT=0
+while kill -0 $PID 2>/dev/null; do
+    COUNT=$((COUNT+1))
+    echo "[DEBUG] Harness running for $((COUNT*30))s ($(date))"
+    sleep 30
+done
+wait $PID
+EXIT_CODE=$?
+echo "[DEBUG 11/12] Harness exited with code: $EXIT_CODE"
+
+# Parse MLPerf results and create benchmark-results.json
+if [ $EXIT_CODE -eq 0 ]; then
+    echo "[DEBUG] Parsing MLPerf results..."
+    python3 -c '
+import json
+import re
+import sys
+from pathlib import Path
+
+# Parse MLPerf summary file
+output_dir = Path("{trial_config.benchmark_config.output_dir}")
+summary_file = output_dir / "mlperf" / "mlperf_log_summary.txt"
+
+if not summary_file.exists():
+    print(f"[ERROR] MLPerf summary file not found: {{summary_file}}")
+    sys.exit(1)
+
+# Read and print summary file for debugging
+print("[DEBUG] Reading MLPerf summary file...")
+with open(summary_file) as f:
+    summary_content = f.read()
+
+print("[DEBUG] ===== MLPerf Summary File Content =====")
+print(summary_content)
+print("[DEBUG] ===== End of Summary File =====")
+
+# Extract metrics
+metrics = dict()
+errors_found = False
+
+for line in summary_content.splitlines():
+    line_lower = line.lower().strip()
+
+    # Check for errors
+    if "error encountered" in line_lower:
+        errors_found = True
+        print(f"[WARNING] MLPerf reported errors: {{line}}")
+
+    # Extract: "Tokens per second: 307.598"
+    # Note: Looking for exact format from MLPerf summary, not "completed tokens per second"
+    if line_lower.startswith("tokens per second") and ":" in line:
+        parts = line.split(":", 1)
+        if len(parts) == 2:
+            try:
+                value = float(parts[1].strip())
+                metrics["output_tokens_per_second"] = value
+                print(f"[DEBUG] Found tokens/sec: {{value}}")
+            except ValueError as e:
+                print(f"[DEBUG] Could not parse value from: {{line}} - {{e}}")
+
+    # Extract: "Samples per second: 102.533"
+    if line_lower.startswith("samples per second") and ":" in line:
+        parts = line.split(":", 1)
+        if len(parts) == 2:
+            try:
+                value = float(parts[1].strip())
+                metrics["samples_per_second"] = value
+                print(f"[DEBUG] Found samples/sec: {{value}}")
+            except ValueError as e:
+                print(f"[DEBUG] Could not parse value from: {{line}} - {{e}}")
+
+if errors_found:
+    print("[ERROR] MLPerf benchmark encountered errors - results may be invalid")
+
+if "output_tokens_per_second" not in metrics:
+    print("[ERROR] Could not extract output_tokens_per_second from MLPerf summary")
+    print(f"[ERROR] Metrics found: {{list(metrics.keys())}}")
+    sys.exit(1)
+
+# Write to results PVC
+# Apply same sanitization as extract_job_results (sanitize_release_name)
+def sanitize_name(name):
+    # Convert to lowercase
+    name = name.lower()
+    # Replace underscores and spaces with hyphens
+    name = name.replace("_", "-").replace(" ", "-")
+    # Remove invalid characters (keep only alphanumeric and hyphens)
+    name = re.sub(r"[^a-z0-9-]", "", name)
+    # Remove consecutive hyphens
+    name = re.sub(r"-+", "-", name)
+    # Remove leading/trailing hyphens
+    name = name.strip("-")
+    # Ensure it starts with a letter or number
+    if name and not name[0].isalnum():
+        name = "release-" + name
+    # Helm release names must be <= 53 characters
+    if len(name) > 53:
+        name = name[:53].rstrip("-")
+    return name or "release"
+
+study_name_safe = sanitize_name("{trial_config.study_name}")
+trial_id_safe = sanitize_name("{trial_config.trial_id}")
+results_dir = Path(f"/mnt/results/{{study_name_safe}}/trial_{{trial_id_safe}}")
+results_dir.mkdir(parents=True, exist_ok=True)
+results_file = results_dir / "benchmark-results.json"
+
+with open(results_file, "w") as f:
+    json.dump(metrics, f, indent=2)
+
+print(f"[INFO] Results written to {{results_file}}")
+print(f"[INFO] Absolute path: {{results_file.absolute()}}")
+print(f"[INFO] File exists: {{results_file.exists()}}")
+print(f"[INFO] File size: {{results_file.stat().st_size}} bytes")
+print("[INFO] output_tokens_per_second: " + str(metrics.get("output_tokens_per_second", 0)))
+if "samples_per_second" in metrics:
+    print("[INFO] samples_per_second: " + str(metrics.get("samples_per_second", 0)))
+
+# Print JSON to logs for debugging and fallback parsing
+print("[INFO] Benchmark results JSON:")
+print(json.dumps(metrics, indent=2))
+'
+    PARSE_EXIT=$?
+    if [ $PARSE_EXIT -ne 0 ]; then
+        echo "[ERROR] Failed to parse MLPerf results"
+        exit $PARSE_EXIT
+    fi
+fi
+
+echo "[DEBUG 12/12] Complete at $(date)"
+exit $EXIT_CODE
+'''
+                            ] if benchmark_type == "mlperf" else (cmd[1:] if len(cmd) > 1 else []),
                             "env": _build_benchmark_env(trial_config, benchmark_type),
                             "volumeMounts": [
                                 {
@@ -1467,7 +1673,12 @@ def create_benchmark_job(
                                     "name": "guidellm-cache",
                                     "mountPath": "/home/guidellm/.cache",
                                 },
-                            ] if benchmark_type == "guidellm" else []),
+                            ] if benchmark_type == "guidellm" else []) + ([
+                                {
+                                    "name": "models",
+                                    "mountPath": "/mnt/models",
+                                },
+                            ] if model_pvc else []),
                         },
                         {
                             "name": "results-retriever",
@@ -1483,7 +1694,12 @@ def create_benchmark_job(
                                     "name": "guidellm-cache",
                                     "mountPath": "/home/guidellm/.cache",
                                 },
-                            ] if benchmark_type == "guidellm" else []),
+                            ] if benchmark_type == "guidellm" else []) + ([
+                                {
+                                    "name": "models",
+                                    "mountPath": "/mnt/models",
+                                },
+                            ] if model_pvc else []),
                         },
                     ],
                     "volumes": [
@@ -1498,7 +1714,14 @@ def create_benchmark_job(
                             "name": "guidellm-cache",
                             "emptyDir": {},
                         },
-                    ] if benchmark_type == "guidellm" else []),
+                    ] if benchmark_type == "guidellm" else []) + ([
+                        {
+                            "name": "models",
+                            "persistentVolumeClaim": {
+                                "claimName": model_pvc,
+                            },
+                        },
+                    ] if model_pvc else []),
                 },
             },
         },
@@ -1903,37 +2126,29 @@ def extract_job_results(job_name: str, namespace: str, kubeconfig: Optional[str]
                 stdout=True,
                 tty=False,
             )
-            
+
             if resp:
                 # Handle stream response - it might be a string or have channel info
                 # Extract the actual content if it's a tuple or has channel prefixes
                 content = resp
+                logger.debug(f"Stream resp type: {type(resp)}, length: {len(resp) if isinstance(resp, str) else 'N/A'}")
+
                 if isinstance(resp, tuple):
                     # Stream returns (stdout, stderr) tuple when both are enabled
                     content = resp[0] if resp[0] else ""
-                elif isinstance(resp, str):
-                    # Remove any channel prefixes (1: stdout, 2: stderr)
-                    # Kubernetes stream can prefix with channel numbers when stderr is enabled
-                    lines = content.split('\n')
-                    cleaned_lines = []
-                    for line in lines:
-                        # Remove channel prefix if present (format: "1:content" or "2:content")
-                        if ':' in line and len(line) > 2 and line[0].isdigit() and line[1] == ':':
-                            line = line[2:]
-                        cleaned_lines.append(line)
-                    content = '\n'.join(cleaned_lines)
-                
-                # Strip whitespace and try to parse
+                    logger.debug(f"Extracted from tuple, content type: {type(content)}")
+
+                # Strip whitespace
                 content = content.strip()
-                
-                # Remove any leading/trailing non-JSON content (error messages, etc.)
-                # Try to find JSON object boundaries
-                start_idx = content.find('{')
-                end_idx = content.rfind('}')
-                if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
-                    content = content[start_idx:end_idx + 1]
-                
+                logger.debug(f"Content after strip, length: {len(content)}, first 200 chars: {content[:200]}")
+
+                # Fix: Kubernetes stream API sometimes returns single quotes instead of double quotes
+                # Convert single quotes to double quotes for valid JSON
+                content = content.replace("'", '"')
+                logger.debug(f"After quote fix, content: {content[:200]}")
+
                 if content:
+                    logger.debug(f"About to parse JSON, content: {content}")
                     try:
                         results_data = json.loads(content)
                         # Create temp file for parsing

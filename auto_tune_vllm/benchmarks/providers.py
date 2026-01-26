@@ -531,25 +531,36 @@ class MLPerfBenchmark(BenchmarkProvider):
     def parse_results(self) -> Dict[str, Any]:
         """
         Parse MLPerf harness benchmark results from output file.
-        
+
+        For Kubernetes backend, the results file is created by the benchmark wrapper
+        which parses mlperf_log_summary.txt and extracts the key metrics.
+
+        For local backend, the results file should be created similarly after
+        the MLPerf harness completes.
+
         Returns:
-            Dictionary with benchmark metrics
+            Dictionary with benchmark metrics including output_tokens_per_second
         """
         results_file = self._results_file
-        
+
         if not os.path.exists(results_file):
             raise RuntimeError(f"MLPerf results file not found: {results_file}")
-        
+
         try:
             with open(results_file) as f:
                 data = json.load(f)
         except json.JSONDecodeError as e:
             raise RuntimeError(f"Invalid JSON in results file: {e}")
 
-        # Placeholder: Return raw JSON data for now
-        # Actual parsing will be implemented separately
-        self._logger.warning(
-            "MLPerf results parsing not yet implemented. Returning raw JSON data."
+        # Validate required metric for optimization
+        if "output_tokens_per_second" not in data:
+            raise RuntimeError(
+                f"Required metric 'output_tokens_per_second' not found in MLPerf results. "
+                f"Available keys: {list(data.keys())}"
+            )
+
+        self._logger.info(
+            f"Parsed MLPerf results: output_tokens_per_second={data['output_tokens_per_second']}"
         )
         return data
 
@@ -598,6 +609,7 @@ class MLPerfBenchmark(BenchmarkProvider):
         """Build MLPerf harness command arguments."""
         cmd = [
             "python3",
+            "-u",  # Unbuffered output to ensure errors are logged before crash
             "harness/harness_main.py",
             "--model",
             config.model,
@@ -613,6 +625,10 @@ class MLPerfBenchmark(BenchmarkProvider):
             str(config.num_samples),
             "--api-server-url",
             model_url,
+            "--user-conf",
+            "user.conf",
+            "--backend",
+            "vllm",
         ]
 
         # Add optional parameters
