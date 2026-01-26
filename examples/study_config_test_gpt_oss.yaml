@@ -14,7 +14,7 @@ execution:
   k8s:
     namespace: "autotune-aanya"  # Kubernetes namespace for deployments
     vllm_image: "vllm/vllm-openai:latest"  # vLLM container image
-    benchmark_image: "quay.io/rh-ee-aansharm/mlperf-6.0@sha256:89c3c57281c4bab40b8b901316f27eee5d16b2b3db824508260e0494ba21d0fc"  # Jan 23 harness + usage.completion_tokens + dataset included
+    benchmark_image: "quay.io/rh-ee-aansharm/mlperf-6.0@sha256:ac63fa7a124c6901ce6538f7f1fd52ef6d7c328a1bbd300fbe187d2104901b8b"
     service_type: "ClusterIP"  # Service type: ClusterIP, NodePort, or LoadBalancer
     service_port: 8000  # Service port for vLLM server
     kubeconfig: "/Users/aansharm/.kube/config"  # Optional: custom kubeconfig path

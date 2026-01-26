@@ -1417,7 +1417,13 @@ def create_benchmark_job(
     trial_id_safe = sanitize_release_name(trial_config.trial_id)
     results_dir = f"{results_base_path}/{study_name_safe}/trial_{trial_id_safe}"
     results_file = f"{results_dir}/benchmark-results.json"
-    
+
+    # Use trial-specific results_dir as output_dir to prevent log accumulation
+    # This ensures MLPerf logs are isolated per trial (existing pattern from Thameem)
+    if benchmark_type == "mlperf":
+        logger.info(f"Using trial-specific output directory: {results_dir}")
+        trial_config.benchmark_config.output_dir = results_dir
+
     # Build command args based on benchmark type
     if benchmark_type == "guidellm":
         cmd = benchmark_provider._build_guidellm_command(
