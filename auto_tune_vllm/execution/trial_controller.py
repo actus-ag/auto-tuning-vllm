@@ -15,6 +15,7 @@ from typing import Any, Dict, Optional
 try:
     import ray
     from ray.exceptions import GetTimeoutError
+
     RAY_AVAILABLE = True
 except ImportError:
     RAY_AVAILABLE = False
@@ -707,7 +708,9 @@ class BaseTrialController(TrialController):
             # Cleanup based on current state
             if benchmark_process and benchmark_process.poll() is None:
                 controller_logger.info("Terminating running benchmark process...")
-                if self.benchmark_provider and hasattr(self.benchmark_provider, "terminate_benchmark"):
+                if self.benchmark_provider and hasattr(
+                    self.benchmark_provider, "terminate_benchmark"
+                ):
                     self.benchmark_provider.terminate_benchmark()
 
             raise KeyboardInterrupt(f"Trial cancelled while {state.name}")
@@ -1000,7 +1003,9 @@ class BaseTrialController(TrialController):
             if period <= 0:
                 period = 1.0
             # Detect if we're using Kubernetes backend
-            use_k8s_monitoring = hasattr(self, 'deployment_name') and hasattr(self, 'namespace')
+            use_k8s_monitoring = hasattr(self, "deployment_name") and hasattr(
+                self, "namespace"
+            )
 
             if use_k8s_monitoring:
                 vllm_logger.info(
@@ -1036,7 +1041,9 @@ class BaseTrialController(TrialController):
                         f"exit code {self.vllm_process.returncode}"
                     )
                     # Terminate running benchmark immediately (if using local benchmark provider)
-                    if self.benchmark_provider and hasattr(self.benchmark_provider, "terminate_benchmark"):
+                    if self.benchmark_provider and hasattr(
+                        self.benchmark_provider, "terminate_benchmark"
+                    ):
                         self.benchmark_provider.terminate_benchmark()
                     break
 
@@ -1044,10 +1051,9 @@ class BaseTrialController(TrialController):
                     # Kubernetes backend: Check pod status via API instead of HTTP
                     if use_k8s_monitoring:
                         from kubernetes import client, config
-                        from kubernetes.client.rest import ApiException
 
                         # Load kubeconfig
-                        kubeconfig = getattr(self, 'kubeconfig', None)
+                        kubeconfig = getattr(self, "kubeconfig", None)
                         if kubeconfig:
                             config.load_kube_config(config_file=kubeconfig)
                         else:
@@ -1062,19 +1068,21 @@ class BaseTrialController(TrialController):
                         # Deployments use labels: app=vllm-server, trial-id=trial-X
                         # NOTE: trial-id is sanitized (lowercase, underscores to hyphens)
                         # Try to get trial_id from instance variable (set in run_trial)
-                        trial_id = getattr(self, '_current_trial_id', None)
+                        trial_id = getattr(self, "_current_trial_id", None)
                         if trial_id:
                             # Import sanitize function to match deployment's label format
                             from .k8s_utils import sanitize_k8s_name
+
                             sanitized_trial_id = sanitize_k8s_name(trial_id)
-                            label_selector = f"app=vllm-server,trial-id={sanitized_trial_id}"
+                            label_selector = (
+                                f"app=vllm-server,trial-id={sanitized_trial_id}"
+                            )
                         else:
                             # Fallback: use generic vllm-server label
-                            label_selector = f"app=vllm-server"
+                            label_selector = "app=vllm-server"
 
                         pods = core_v1.list_namespaced_pod(
-                            namespace=self.namespace,
-                            label_selector=label_selector
+                            namespace=self.namespace, label_selector=label_selector
                         )
 
                         # DEBUG: Log what we're searching for
@@ -1095,28 +1103,47 @@ class BaseTrialController(TrialController):
                             pod_phase = pod.status.phase
 
                             # Check for error states
-                            error_states = ['Failed', 'Unknown']
+                            error_states = ["Failed", "Unknown"]
                             container_errors = []
 
                             if pod.status.container_statuses:
                                 for container_status in pod.status.container_statuses:
-                                    if container_status.state and container_status.state.waiting:
-                                        if container_status.state.waiting.reason in ['CrashLoopBackOff', 'Error', 'ImagePullBackOff']:
-                                            container_errors.append(f"{container_status.name}: {container_status.state.waiting.reason}")
-                                    elif container_status.state and container_status.state.terminated:
-                                        if container_status.state.terminated.exit_code != 0:
-                                            container_errors.append(f"{container_status.name}: terminated with exit code {container_status.state.terminated.exit_code}")
+                                    if (
+                                        container_status.state
+                                        and container_status.state.waiting
+                                    ):
+                                        if container_status.state.waiting.reason in [
+                                            "CrashLoopBackOff",
+                                            "Error",
+                                            "ImagePullBackOff",
+                                        ]:
+                                            container_errors.append(
+                                                f"{container_status.name}: {container_status.state.waiting.reason}"
+                                            )
+                                    elif (
+                                        container_status.state
+                                        and container_status.state.terminated
+                                    ):
+                                        if (
+                                            container_status.state.terminated.exit_code
+                                            != 0
+                                        ):
+                                            container_errors.append(
+                                                f"{container_status.name}: terminated with exit code {container_status.state.terminated.exit_code}"
+                                            )
 
                             if pod_phase in error_states or container_errors:
                                 consecutive_failures += 1
                                 error_msg = f"pod phase={pod_phase}"
                                 if container_errors:
-                                    error_msg += f", containers={', '.join(container_errors)}"
+                                    error_msg += (
+                                        f", containers={', '.join(container_errors)}"
+                                    )
                                 vllm_logger.warning(
                                     f"Health check failed: {error_msg} "
                                     f"(failure {consecutive_failures}/{max_failures})"
                                 )
-                            elif pod_phase == 'Running':
+                            elif pod_phase == "Running":
                                 # Pod is healthy
                                 if debug:
                                     vllm_logger.info(
@@ -1197,7 +1224,9 @@ class BaseTrialController(TrialController):
                         f"{self._health_check_failure_reason}"
                     )
                     # Terminate running benchmark immediately (if using local benchmark provider)
-                    if self.benchmark_provider and hasattr(self.benchmark_provider, "terminate_benchmark"):
+                    if self.benchmark_provider and hasattr(
+                        self.benchmark_provider, "terminate_benchmark"
+                    ):
                         self.benchmark_provider.terminate_benchmark()
                     break
 
@@ -1302,7 +1331,9 @@ class BaseTrialController(TrialController):
         self._flush_logger_handlers(controller_logger)
 
         # Terminate any running benchmark process (if using local benchmark provider)
-        if self.benchmark_provider and hasattr(self.benchmark_provider, "terminate_benchmark"):
+        if self.benchmark_provider and hasattr(
+            self.benchmark_provider, "terminate_benchmark"
+        ):
             try:
                 controller_logger.info(
                     "Trial Controller: Terminating benchmark process..."
@@ -1486,7 +1517,15 @@ class RayWorkerTrialController(BaseTrialController):
 class HelmTrialController(BaseTrialController):
     """Helm-based Kubernetes trial controller."""
 
-    def __init__(self, release_name: str, namespace: str = "default", benchmark_image: Optional[str] = None, helm_config: Optional[Dict[str, Any]] = None, benchmark_pvc: Optional[str] = None, model_pvc: Optional[str] = None):
+    def __init__(
+        self,
+        release_name: str,
+        namespace: str = "default",
+        benchmark_image: Optional[str] = None,
+        helm_config: Optional[Dict[str, Any]] = None,
+        benchmark_pvc: Optional[str] = None,
+        model_pvc: Optional[str] = None,
+    ):
         """Initialize Helm trial controller.
 
         Args:
@@ -1511,11 +1550,12 @@ class HelmTrialController(BaseTrialController):
         """Get Kubernetes pod/node identifier."""
         try:
             from kubernetes import client, config
+
             try:
                 config.load_incluster_config()
             except config.ConfigException:
                 config.load_kube_config()
-            
+
             v1 = client.CoreV1Api()
             node_name = os.environ.get("NODE_NAME") or "kubernetes-node"
             return f"k8s_{node_name}"
@@ -1524,7 +1564,7 @@ class HelmTrialController(BaseTrialController):
 
     def _validate_environment(self, trial_config: Optional[TrialConfig] = None) -> None:
         """Validate environment for Helm-based deployments.
-        
+
         For Helm deployments, vLLM and benchmarks run remotely in Kubernetes,
         so we only need to validate controller-side dependencies (optuna, kubernetes client).
         """
@@ -1574,54 +1614,73 @@ class HelmTrialController(BaseTrialController):
             )
 
         self._environment_validated = True
-        logger.info("Environment validation passed for Helm controller (remote execution)")
+        logger.info(
+            "Environment validation passed for Helm controller (remote execution)"
+        )
 
     def _start_vllm_server(self, trial_config: TrialConfig) -> dict:
         """Start vLLM server via Helm (already deployed by backend).
-        
+
         Args:
             trial_config: Trial configuration
-            
+
         Returns:
             Dictionary with server info (port, url, pid)
         """
         from .helm_utils import get_service_url, wait_for_service_ready
-        
+
         vllm_logger = self._get_trial_logger("vllm")
-        vllm_logger.info(f"Using Helm-deployed vLLM server (release: {self.release_name})")
-        
+        vllm_logger.info(
+            f"Using Helm-deployed vLLM server (release: {self.release_name})"
+        )
+
         # Get service URL from Helm release
         # Pass helm_config if available to check for full stack deployment
-        helm_config = getattr(self, 'helm_config', None)
+        helm_config = getattr(self, "helm_config", None)
         # #region agent log - DISABLED
         # import json
         # import time
         # with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
         #     f.write(json.dumps({"sessionId":"debug-session","runId":"trial-controller","hypothesisId":"A","location":"trial_controller.py:1425","message":"About to call get_service_url","data":{"release_name":self.release_name,"namespace":self.namespace,"helm_config":str(helm_config)},"timestamp":int(time.time()*1000)})+"\n")
         # DEBUG DISABLED: #endregion
-        self.server_url = get_service_url(self.release_name, self.namespace, helm_config)
+        self.server_url = get_service_url(
+            self.release_name, self.namespace, helm_config
+        )
         # #region agent log - DISABLED
         # with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
         #     f.write(json.dumps({"sessionId":"debug-session","runId":"trial-controller","hypothesisId":"A","location":"trial_controller.py:1430","message":"get_service_url returned","data":{"server_url":self.server_url},"timestamp":int(time.time()*1000)})+"\n")
         # DEBUG DISABLED: #endregion
         vllm_logger.info(f"vLLM server URL: {self.server_url}")
-        
+
         # Wait for service to be ready
         # Parse URL - handle both IP addresses and DNS names
         from urllib.parse import urlparse
+
         parsed = urlparse(self.server_url)
         hostname = parsed.hostname
         # If it's an IP address, pass the full URL; otherwise extract service name
-        if hostname and all(c.isdigit() or c == "." for c in hostname) and hostname.count(".") == 3:
+        if (
+            hostname
+            and all(c.isdigit() or c == "." for c in hostname)
+            and hostname.count(".") == 3
+        ):
             # It's an IP address - pass the full URL
             service_name = self.server_url
         else:
             # It's a DNS name - extract service name
-            service_name = hostname.split(".")[0] if hostname else self.server_url.split("://")[1].split("/")[0]
-        ready = wait_for_service_ready(service_name, self.namespace, trial_config.vllm_startup_timeout)
+            service_name = (
+                hostname.split(".")[0]
+                if hostname
+                else self.server_url.split("://")[1].split("/")[0]
+            )
+        ready = wait_for_service_ready(
+            service_name, self.namespace, trial_config.vllm_startup_timeout
+        )
         if not ready:
-            raise RuntimeError(f"vLLM service not ready after {trial_config.vllm_startup_timeout}s")
-        
+            raise RuntimeError(
+                f"vLLM service not ready after {trial_config.vllm_startup_timeout}s"
+            )
+
         # Extract port from URL
         port = 8000
         if ":" in self.server_url:
@@ -1629,36 +1688,44 @@ class HelmTrialController(BaseTrialController):
                 port = int(self.server_url.split(":")[-1].split("/")[0])
             except ValueError:
                 pass
-        
+
         return {
             "port": port,
             "url": self.server_url,
             "pid": None,  # No process PID for Helm deployments
         }
 
-    def _start_benchmark(self, trial_config: TrialConfig, benchmark_image: Optional[str] = None) -> str:
+    def _start_benchmark(
+        self, trial_config: TrialConfig, benchmark_image: Optional[str] = None
+    ) -> str:
         """Start benchmark as Kubernetes Job.
-        
+
         Args:
             trial_config: Trial configuration
             benchmark_image: Optional container image for benchmark
-            
+
         Returns:
             Job name
         """
         from .helm_utils import create_benchmark_job
-        
+
         controller_logger = self._get_trial_logger("controller")
         controller_logger.info("Creating Kubernetes Job for benchmark")
-        
+
         if not self.server_url:
             raise RuntimeError("vLLM server URL not available")
-        
+
         # Create benchmark Job
         self.benchmark_job_name = create_benchmark_job(
-            trial_config, self.server_url, self.namespace, benchmark_image, kubeconfig=None, benchmark_pvc=self.benchmark_pvc, model_pvc=self.model_pvc
+            trial_config,
+            self.server_url,
+            self.namespace,
+            benchmark_image,
+            kubeconfig=None,
+            benchmark_pvc=self.benchmark_pvc,
+            model_pvc=self.model_pvc,
         )
-        
+
         controller_logger.info(f"Created benchmark Job: {self.benchmark_job_name}")
         return self.benchmark_job_name
 
@@ -1666,80 +1733,84 @@ class HelmTrialController(BaseTrialController):
         self, job_name: str, timeout: int = 3600
     ) -> bool:
         """Wait for benchmark Job to complete.
-        
+
         Args:
             job_name: Job name
             timeout: Timeout in seconds
-            
+
         Returns:
             True if completed successfully, False otherwise
         """
         from .helm_utils import wait_for_job_completion
-        
+
         controller_logger = self._get_trial_logger("controller")
         controller_logger.info(f"Waiting for benchmark Job {job_name} to complete")
-        
-        kubeconfig = getattr(self, 'kubeconfig', None)
-        return wait_for_job_completion(job_name, self.namespace, timeout, kubeconfig=kubeconfig)
+
+        kubeconfig = getattr(self, "kubeconfig", None)
+        return wait_for_job_completion(
+            job_name, self.namespace, timeout, kubeconfig=kubeconfig
+        )
 
     def _extract_benchmark_results(self, job_name: str) -> dict:
         """Extract benchmark results from Kubernetes Job.
-        
+
         Args:
             job_name: Job name
-            
+
         Returns:
             Dictionary of benchmark results
         """
         from .helm_utils import extract_job_results
-        
+
         controller_logger = self._get_trial_logger("controller")
         controller_logger.info(f"Extracting results from Job {job_name}")
-        
-        kubeconfig = getattr(self, 'kubeconfig', None)
+
+        kubeconfig = getattr(self, "kubeconfig", None)
         return extract_job_results(job_name, self.namespace, kubeconfig=kubeconfig)
 
     def run_trial(
         self, trial_config: TrialConfig, cancellation_flag_actor=None
     ) -> TrialResult:
         """Execute trial with Helm-deployed vLLM and Kubernetes Job benchmark.
-        
+
         Args:
             trial_config: Trial configuration
             cancellation_flag_actor: Optional cancellation flag (not used for Helm)
-            
+
         Returns:
             TrialResult with benchmark results
         """
         from ..core.trial import ExecutionInfo, TrialResult
         from .helm_utils import delete_benchmark_job
-        
+
         execution_info = ExecutionInfo()
         execution_info.helm_release_name = self.release_name
         controller_logger = self._get_trial_logger("controller")
-        
+
         controller_logger.info(
             f"Running Helm trial {trial_config.trial_id} "
             f"with parameters: {trial_config.parameters}"
         )
-        
+
         try:
             # Setup trial-specific logging
             self._setup_trial_logging(trial_config)
-            
+
             # Start vLLM server (already deployed via Helm, just get URL)
             controller_logger.info("Getting vLLM server URL from Helm release")
             execution_info.mark_vllm_started()
             server_info = self._start_vllm_server(trial_config)
             execution_info.worker_node_id = self._get_worker_id()
-            
+
             # Note: _start_vllm_server already calls wait_for_service_ready which uses
             # a Kubernetes Job to verify readiness for ClusterIP services.
             # No need to call _wait_for_server_ready again (which would fail for ClusterIP
             # services since it tries HTTP from outside the cluster).
-            controller_logger.info(f"Server ready at {server_info['url']} (verified via readiness check Job)")
+            controller_logger.info(
+                f"Server ready at {server_info['url']} (verified via readiness check Job)"
+            )
             execution_info.mark_vllm_ready()
-            
+
             # Start health monitoring
             health_url = server_info["url"].replace("/v1", "/health")
             self._start_health_monitoring(
@@ -1747,27 +1818,32 @@ class HelmTrialController(BaseTrialController):
                 check_interval=trial_config.health_check_interval,
                 max_failures=trial_config.health_check_max_failures,
             )
-            
+
             # Start benchmark as Kubernetes Job
             controller_logger.info("Starting benchmark as Kubernetes Job")
             execution_info.mark_benchmark_started()
             job_name = self._start_benchmark(trial_config, self.benchmark_image)
             execution_info.benchmark_job_name = job_name
-            
+
             # Wait for benchmark completion
             # Timeout should account for: pod initialization, PVC mounting, init container, benchmark duration
             # Minimum 5 minutes for initialization, plus 1.5x benchmark duration
             min_init_time = 300  # 5 minutes minimum for pod/PVC initialization
             benchmark_time = trial_config.benchmark_config.max_seconds * 1.5
             max_benchmark_time = max(min_init_time, benchmark_time)
-            completed = self._wait_for_benchmark_completion(job_name, int(max_benchmark_time))
-            
+            completed = self._wait_for_benchmark_completion(
+                job_name, int(max_benchmark_time)
+            )
+
             if not completed:
                 # Collect logs before raising error
                 try:
                     from .helm_utils import collect_job_logs
-                    kubeconfig = getattr(self, 'kubeconfig', None)
-                    logs = collect_job_logs(job_name, self.namespace, kubeconfig=kubeconfig)
+
+                    kubeconfig = getattr(self, "kubeconfig", None)
+                    logs = collect_job_logs(
+                        job_name, self.namespace, kubeconfig=kubeconfig
+                    )
                     controller_logger.error(
                         f"Benchmark Job {job_name} did not complete. Logs:\n{logs}"
                     )
@@ -1776,23 +1852,27 @@ class HelmTrialController(BaseTrialController):
                         f"Failed to collect logs for incomplete benchmark job "
                         f"{job_name}: {log_e}"
                     )
-                raise RuntimeError(f"Benchmark Job {job_name} did not complete within timeout")
-            
+                raise RuntimeError(
+                    f"Benchmark Job {job_name} did not complete within timeout"
+                )
+
             # Extract results
             benchmark_result = self._extract_benchmark_results(job_name)
-            
+
             # Check if vLLM server died during benchmark
             self._check_health_status()
-            
+
             # Extract objectives
             objective_values = self._extract_objectives(
                 benchmark_result, trial_config.optimization_config
             )
-            controller_logger.info(f"Trial completed with objectives: {objective_values}")
-            
+            controller_logger.info(
+                f"Trial completed with objectives: {objective_values}"
+            )
+
             execution_info.mark_benchmark_completed()
             execution_info.mark_completed(status="success")
-            
+
             return TrialResult(
                 trial_id=trial_config.trial_id,
                 trial_number=trial_config.trial_number,
@@ -1802,12 +1882,12 @@ class HelmTrialController(BaseTrialController):
                 execution_info=execution_info,
                 success=True,
             )
-            
+
         except Exception as e:
             execution_info.mark_completed(status="failed")
             error_type = self._classify_error(e)
             controller_logger.error(f"Trial {trial_config.trial_id} failed: {e}")
-            
+
             return TrialResult(
                 trial_id=trial_config.trial_id,
                 trial_number=trial_config.trial_number,
@@ -1838,7 +1918,9 @@ class HelmTrialController(BaseTrialController):
     def cleanup_resources(self):
         """Clean up resources (benchmark Job cleanup handled in run_trial)."""
         controller_logger = self._get_trial_logger("controller")
-        controller_logger.info("Helm trial controller cleanup (release managed by backend)")
+        controller_logger.info(
+            "Helm trial controller cleanup (release managed by backend)"
+        )
 
 
 class KubernetesTrialController(BaseTrialController):
@@ -1886,6 +1968,7 @@ class KubernetesTrialController(BaseTrialController):
         """Get Kubernetes pod/node identifier."""
         try:
             from kubernetes import client, config
+
             try:
                 config.load_incluster_config()
             except config.ConfigException:
@@ -1893,7 +1976,7 @@ class KubernetesTrialController(BaseTrialController):
                     config.load_kube_config(config_file=self.kubeconfig)
                 else:
                     config.load_kube_config()
-            
+
             v1 = client.CoreV1Api()
             node_name = os.environ.get("NODE_NAME") or "kubernetes-node"
             return f"k8s_{node_name}"
@@ -1947,25 +2030,27 @@ class KubernetesTrialController(BaseTrialController):
             )
 
         self._environment_validated = True
-        logger.info("Environment validation passed for Kubernetes controller (remote execution)")
+        logger.info(
+            "Environment validation passed for Kubernetes controller (remote execution)"
+        )
 
     def _start_vllm_server(self, trial_config: TrialConfig) -> dict:
         """Start vLLM server via Kubernetes Deployment (already deployed by backend).
-        
+
         Args:
             trial_config: Trial configuration
-            
+
         Returns:
             Dictionary with server info (port, url, pid)
         """
         from .k8s_utils import get_service_url, wait_for_deployment_ready
-        
+
         vllm_logger = self._get_trial_logger("vllm")
         vllm_logger.info(
             f"Using Kubernetes-deployed vLLM server "
             f"(Deployment: {self.deployment_name}, Service: {self.service_name})"
         )
-        
+
         # Wait for deployment to be ready
         ready = wait_for_deployment_ready(
             deployment_name=self.deployment_name,
@@ -1977,7 +2062,7 @@ class KubernetesTrialController(BaseTrialController):
             raise RuntimeError(
                 f"vLLM Deployment not ready after {trial_config.vllm_startup_timeout}s"
             )
-        
+
         # Get service URL
         self.server_url = get_service_url(
             service_name=self.service_name,
@@ -1986,7 +2071,7 @@ class KubernetesTrialController(BaseTrialController):
             kubeconfig=self.kubeconfig,
         )
         vllm_logger.info(f"vLLM server URL: {self.server_url}")
-        
+
         # Extract port from URL
         port = self.service_port
         if ":" in self.server_url:
@@ -1994,36 +2079,44 @@ class KubernetesTrialController(BaseTrialController):
                 port = int(self.server_url.split(":")[-1].split("/")[0])
             except ValueError:
                 pass
-        
+
         return {
             "port": port,
             "url": self.server_url,
             "pid": None,  # No process PID for Kubernetes deployments
         }
 
-    def _start_benchmark(self, trial_config: TrialConfig, benchmark_image: Optional[str] = None) -> str:
+    def _start_benchmark(
+        self, trial_config: TrialConfig, benchmark_image: Optional[str] = None
+    ) -> str:
         """Start benchmark as Kubernetes Job.
-        
+
         Args:
             trial_config: Trial configuration
             benchmark_image: Optional container image for benchmark
-            
+
         Returns:
             Job name
         """
         from .helm_utils import create_benchmark_job
-        
+
         controller_logger = self._get_trial_logger("controller")
         controller_logger.info("Creating Kubernetes Job for benchmark")
-        
+
         if not self.server_url:
             raise RuntimeError("vLLM server URL not available")
-        
+
         # Create benchmark Job
         self.benchmark_job_name = create_benchmark_job(
-            trial_config, self.server_url, self.namespace, benchmark_image or self.benchmark_image, self.kubeconfig, benchmark_pvc=self.benchmark_pvc, model_pvc=self.model_pvc
+            trial_config,
+            self.server_url,
+            self.namespace,
+            benchmark_image or self.benchmark_image,
+            self.kubeconfig,
+            benchmark_pvc=self.benchmark_pvc,
+            model_pvc=self.model_pvc,
         )
-        
+
         controller_logger.info(f"Created benchmark Job: {self.benchmark_job_name}")
         return self.benchmark_job_name
 
@@ -2031,54 +2124,56 @@ class KubernetesTrialController(BaseTrialController):
         self, job_name: str, timeout: int = 3600
     ) -> bool:
         """Wait for benchmark Job to complete.
-        
+
         Args:
             job_name: Job name
             timeout: Timeout in seconds
-            
+
         Returns:
             True if completed successfully, False otherwise
         """
         from .helm_utils import wait_for_job_completion
-        
+
         controller_logger = self._get_trial_logger("controller")
         controller_logger.info(f"Waiting for benchmark Job {job_name} to complete")
-        
-        kubeconfig = getattr(self, 'kubeconfig', None)
-        return wait_for_job_completion(job_name, self.namespace, timeout, kubeconfig=kubeconfig)
+
+        kubeconfig = getattr(self, "kubeconfig", None)
+        return wait_for_job_completion(
+            job_name, self.namespace, timeout, kubeconfig=kubeconfig
+        )
 
     def _extract_benchmark_results(self, job_name: str) -> dict:
         """Extract benchmark results from Kubernetes Job.
-        
+
         Args:
             job_name: Job name
-            
+
         Returns:
             Dictionary of benchmark results
         """
         from .helm_utils import extract_job_results
-        
+
         controller_logger = self._get_trial_logger("controller")
         controller_logger.info(f"Extracting results from Job {job_name}")
-        
-        kubeconfig = getattr(self, 'kubeconfig', None)
+
+        kubeconfig = getattr(self, "kubeconfig", None)
         return extract_job_results(job_name, self.namespace, kubeconfig=kubeconfig)
 
     def run_trial(
         self, trial_config: TrialConfig, cancellation_flag_actor=None
     ) -> TrialResult:
         """Execute trial with Kubernetes-deployed vLLM and Kubernetes Job benchmark.
-        
+
         Args:
             trial_config: Trial configuration
             cancellation_flag_actor: Optional cancellation flag (not used for Kubernetes)
-            
+
         Returns:
             TrialResult with benchmark results
         """
         from ..core.trial import ExecutionInfo, TrialResult
         from .helm_utils import delete_benchmark_job
-        
+
         execution_info = ExecutionInfo()
 
         # Store trial_id for health monitoring label selector
@@ -2093,13 +2188,13 @@ class KubernetesTrialController(BaseTrialController):
         try:
             # Setup trial-specific logging
             self._setup_trial_logging(trial_config)
-            
+
             # Start vLLM server (already deployed via Kubernetes, just get URL)
             controller_logger.info("Getting vLLM server URL from Kubernetes Service")
             execution_info.mark_vllm_started()
             server_info = self._start_vllm_server(trial_config)
             execution_info.worker_node_id = self._get_worker_id()
-            
+
             # Wait for server to actually be ready (HTTP health check)
             # Note: wait_for_deployment_ready only checks pod status, not HTTP readiness
             controller_logger.info(
@@ -2107,6 +2202,7 @@ class KubernetesTrialController(BaseTrialController):
                 f"(timeout: {trial_config.vllm_startup_timeout}s)"
             )
             from .helm_utils import wait_for_service_ready
+
             ready = wait_for_service_ready(
                 service_name=server_info["url"],
                 namespace=self.namespace,
@@ -2117,13 +2213,13 @@ class KubernetesTrialController(BaseTrialController):
                 raise RuntimeError(
                     f"vLLM server at {server_info['url']} not ready after {trial_config.vllm_startup_timeout}s"
                 )
-            
+
             controller_logger.info(
                 f"Server ready at {server_info['url']} "
                 f"(Deployment: {self.deployment_name})"
             )
             execution_info.mark_vllm_ready()
-            
+
             # Start health monitoring
             health_url = server_info["url"].replace("/v1", "/health")
             self._start_health_monitoring(
@@ -2131,27 +2227,32 @@ class KubernetesTrialController(BaseTrialController):
                 check_interval=trial_config.health_check_interval,
                 max_failures=trial_config.health_check_max_failures,
             )
-            
+
             # Start benchmark as Kubernetes Job
             controller_logger.info("Starting benchmark as Kubernetes Job")
             execution_info.mark_benchmark_started()
             job_name = self._start_benchmark(trial_config, self.benchmark_image)
             execution_info.benchmark_job_name = job_name
-            
+
             # Wait for benchmark completion
             # Timeout should account for: pod initialization, PVC mounting, init container, benchmark duration
             # Minimum 5 minutes for initialization, plus 1.5x benchmark duration
             min_init_time = 300  # 5 minutes minimum for pod/PVC initialization
             benchmark_time = trial_config.benchmark_config.max_seconds * 1.5
             max_benchmark_time = max(min_init_time, benchmark_time)
-            completed = self._wait_for_benchmark_completion(job_name, int(max_benchmark_time))
-            
+            completed = self._wait_for_benchmark_completion(
+                job_name, int(max_benchmark_time)
+            )
+
             if not completed:
                 # Collect logs before raising error
                 try:
                     from .helm_utils import collect_job_logs
-                    kubeconfig = getattr(self, 'kubeconfig', None)
-                    logs = collect_job_logs(job_name, self.namespace, kubeconfig=kubeconfig)
+
+                    kubeconfig = getattr(self, "kubeconfig", None)
+                    logs = collect_job_logs(
+                        job_name, self.namespace, kubeconfig=kubeconfig
+                    )
                     controller_logger.error(
                         f"Benchmark Job {job_name} did not complete. Logs:\n{logs}"
                     )
@@ -2160,23 +2261,27 @@ class KubernetesTrialController(BaseTrialController):
                         f"Failed to collect logs for incomplete benchmark job "
                         f"{job_name}: {log_e}"
                     )
-                raise RuntimeError(f"Benchmark Job {job_name} did not complete within timeout")
-            
+                raise RuntimeError(
+                    f"Benchmark Job {job_name} did not complete within timeout"
+                )
+
             # Extract results
             benchmark_result = self._extract_benchmark_results(job_name)
-            
+
             # Check if vLLM server died during benchmark
             self._check_health_status()
-            
+
             # Extract objectives
             objective_values = self._extract_objectives(
                 benchmark_result, trial_config.optimization_config
             )
-            controller_logger.info(f"Trial completed with objectives: {objective_values}")
-            
+            controller_logger.info(
+                f"Trial completed with objectives: {objective_values}"
+            )
+
             execution_info.mark_benchmark_completed()
             execution_info.mark_completed(status="success")
-            
+
             return TrialResult(
                 trial_id=trial_config.trial_id,
                 trial_number=trial_config.trial_number,
@@ -2186,12 +2291,12 @@ class KubernetesTrialController(BaseTrialController):
                 execution_info=execution_info,
                 success=True,
             )
-            
+
         except Exception as e:
             execution_info.mark_completed(status="failed")
             error_type = self._classify_error(e)
             controller_logger.error(f"Trial {trial_config.trial_id} failed: {e}")
-            
+
             return TrialResult(
                 trial_id=trial_config.trial_id,
                 trial_number=trial_config.trial_number,
@@ -2222,7 +2327,9 @@ class KubernetesTrialController(BaseTrialController):
     def cleanup_resources(self):
         """Clean up resources (benchmark Job cleanup handled in run_trial)."""
         controller_logger = self._get_trial_logger("controller")
-        controller_logger.info("Kubernetes trial controller cleanup (Deployment/Service managed by backend)")
+        controller_logger.info(
+            "Kubernetes trial controller cleanup (Deployment/Service managed by backend)"
+        )
 
     def request_cancellation(self):
         """Request cancellation of the running trial."""
@@ -2239,14 +2346,14 @@ def _is_kubernetes_env() -> bool:
 
 def _get_node_ip() -> str:
     """Get node IP address for server URL.
-    
+
     Returns:
         Node IP address or hostname, falls back to localhost
     """
     try:
         # Try to get hostname first
         hostname = socket.gethostname()
-        
+
         # Try to resolve to IP address
         try:
             node_ip = socket.gethostbyname(hostname)
@@ -2268,31 +2375,32 @@ def _get_kubernetes_namespace() -> str:
     namespace = os.environ.get("POD_NAMESPACE")
     if namespace:
         return namespace
-    
+
     # Try reading from service account namespace file
     try:
         with open("/var/run/secrets/kubernetes.io/serviceaccount/namespace", "r") as f:
             return f.read().strip()
     except (FileNotFoundError, IOError):
         pass
-    
+
     # Default namespace
     return "default"
 
 
 # SharedState Actor for server URL communication
 if RAY_AVAILABLE:
+
     @ray.remote
     class SharedState:
         """Ray actor to hold vLLM server URL for communication between actors."""
-        
+
         def __init__(self):
             self.server_url: Optional[str] = None
-        
+
         def set_server_url(self, url: str):
             """Set the vLLM server URL."""
             self.server_url = url
-        
+
         def get_server_url(self) -> Optional[str]:
             """Get the vLLM server URL."""
             return self.server_url
@@ -2300,46 +2408,80 @@ else:
     # Dummy class when Ray is not available
     class SharedState:
         """Dummy SharedState when Ray is not available."""
-        def __init__(self): pass
-        def set_server_url(self, url: str): pass
-        def get_server_url(self) -> Optional[str]: return None
+
+        def __init__(self):
+            pass
+
+        def set_server_url(self, url: str):
+            pass
+
+        def get_server_url(self) -> Optional[str]:
+            return None
 
 
 # VLLM Server Actor
 if RAY_AVAILABLE:
+
     @ray.remote
     class VLLMServerActor:
         """Ray actor that manages vLLM server lifecycle."""
-        def __init__(self): pass
-        def start_server(self, trial_config): return {}
-        def get_server_url(self): return None
-        def is_ready(self): return False
-        def wait_for_ready(self, timeout=300): return False
-        def cleanup(self): pass
+
+        def __init__(self):
+            pass
+
+        def start_server(self, trial_config):
+            return {}
+
+        def get_server_url(self):
+            return None
+
+        def is_ready(self):
+            return False
+
+        def wait_for_ready(self, timeout=300):
+            return False
+
+        def cleanup(self):
+            pass
 else:
+
     class VLLMServerActor:
         """Dummy VLLMServerActor when Ray is not available."""
+
         pass
+
 
 # Workload Actor
 if RAY_AVAILABLE:
+
     @ray.remote
     class WorkloadActor:
         """Ray actor that runs benchmark workload."""
-        def __init__(self): pass
-        def run_benchmark(self, *args, **kwargs): return {}
+
+        def __init__(self):
+            pass
+
+        def run_benchmark(self, *args, **kwargs):
+            return {}
 else:
+
     class WorkloadActor:
         """Dummy WorkloadActor when Ray is not available."""
+
         pass
+
 
 # Ray remote actor wrapper (kept for backward compatibility)
 if RAY_AVAILABLE:
+
     @ray.remote
     class RayTrialActor(RayWorkerTrialController):
         """Ray remote actor for distributed trial execution."""
+
         pass
 else:
+
     class RayTrialActor(RayWorkerTrialController):
         """Dummy RayTrialActor when Ray is not available."""
+
         pass

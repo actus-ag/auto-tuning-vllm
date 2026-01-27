@@ -489,9 +489,10 @@ class StudyController:
             raise ValueError(msg)
         if max_concurrent_trials < 1:
             raise ValueError("--max-concurrent-trials must be >= 1")
-        
+
         # Helm backend does not support parallel trials
         from ..execution.backends import HelmExecutionBackend
+
         if isinstance(self.backend, HelmExecutionBackend):
             if max_concurrent_trials > 1:
                 raise ValueError(
@@ -638,10 +639,7 @@ class StudyController:
         self, remaining_trials: int, max_concurrent_trials: float
     ):
         """Submit new trials up to limits."""
-        while (
-            remaining_trials > 0
-            and len(self.active_trials) < max_concurrent_trials
-        ):
+        while remaining_trials > 0 and len(self.active_trials) < max_concurrent_trials:
             trial = self.study.ask()
 
             # Check if these exact parameters have already been tried and failed
@@ -950,7 +948,7 @@ class StudyController:
 
             if exec_info.worker_node_id:
                 trial.set_user_attr("worker_node_id", exec_info.worker_node_id)
-            
+
             # Store Helm deployment information
             if exec_info.helm_release_name:
                 trial.set_user_attr("helm_release_name", exec_info.helm_release_name)
@@ -1161,9 +1159,7 @@ class StudyController:
             )
             return
         if self.config.optimization.skip_baseline:
-            logger.info(
-                "skip_baseline flag is set to true, skipping baseline trials"
-            )
+            logger.info("skip_baseline flag is set to true, skipping baseline trials")
             return
         logger.info("🔄 Running baseline trials...")
 
