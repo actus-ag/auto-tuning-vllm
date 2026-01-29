@@ -542,12 +542,13 @@ class MLPerfBenchmark(BenchmarkProvider):
         # Validate required metric for optimization
         if "output_tokens_per_second" not in data:
             raise RuntimeError(
-                f"Required metric 'output_tokens_per_second' not found in MLPerf results. "
-                f"Available keys: {list(data.keys())}"
+                f"Required metric 'output_tokens_per_second' not found "
+                f"in MLPerf results. Available keys: {list(data.keys())}"
             )
 
+        output_tps = data['output_tokens_per_second']
         self._logger.info(
-            f"Parsed MLPerf results: output_tokens_per_second={data['output_tokens_per_second']}"
+            f"Parsed MLPerf results: output_tokens_per_second={output_tps}"
         )
         return data
 
@@ -625,6 +626,10 @@ class MLPerfBenchmark(BenchmarkProvider):
             cmd.extend(["--mlflow-experiment-name", config.mlflow_experiment_name])
         if config.mlflow_host:
             cmd.extend(["--mlflow-host", config.mlflow_host])
+        if config.enable_metrics:
+            cmd.append("--enable-metrics")
+        if config.tensor_parallel_size is not None:
+            cmd.extend(["--mlflow-description", f"TP={config.tensor_parallel_size}"])
 
         # Scenario-specific parameters
         if config.scenario == "Offline":

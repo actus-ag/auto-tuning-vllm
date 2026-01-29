@@ -817,13 +817,14 @@ def get_service_url(release_name: str, namespace: str, helm_config: dict = None)
         )
 
 
-def create_readiness_check_job(service_url: str, namespace: str, job_name: str) -> str:
+def create_readiness_check_job(service_url: str, namespace: str, job_name: str, kubeconfig: Optional[str] = None) -> str:
     """Create a Kubernetes Job to check service readiness from inside the cluster.
 
     Args:
         service_url: Service URL to check (e.g., http://172.30.243.32:80/v1/models)
         namespace: Kubernetes namespace
         job_name: Name for the readiness check job
+        kubeconfig: Path to kubeconfig file
 
     Returns:
         Job name
@@ -836,9 +837,16 @@ def create_readiness_check_job(service_url: str, namespace: str, job_name: str) 
         raise RuntimeError("kubernetes library required for Helm backend")
 
     try:
-        config.load_incluster_config()
-    except config.ConfigException:
-        config.load_kube_config()
+        if kubeconfig:
+            config.load_kube_config(config_file=kubeconfig)
+        else:
+            try:
+                config.load_incluster_config()
+            except config.ConfigException:
+                config.load_kube_config()
+    except Exception as e:
+        logger.error(f"Failed to load Kubernetes config: {e}")
+        raise RuntimeError(f"Failed to load Kubernetes config: {e}")
 
     batch_v1 = client.BatchV1Api()
 
@@ -989,12 +997,13 @@ exit 1
         )
 
 
-def check_readiness_job_result(job_name: str, namespace: str) -> bool:
+def check_readiness_job_result(job_name: str, namespace: str, kubeconfig: Optional[str] = None) -> bool:
     """Check if the readiness check Job succeeded.
 
     Args:
         job_name: Job name
         namespace: Kubernetes namespace
+        kubeconfig: Path to kubeconfig file
 
     Returns:
         True if job succeeded, False otherwise
@@ -1007,9 +1016,16 @@ def check_readiness_job_result(job_name: str, namespace: str) -> bool:
         return False
 
     try:
-        config.load_incluster_config()
-    except config.ConfigException:
-        config.load_kube_config()
+        if kubeconfig:
+            config.load_kube_config(config_file=kubeconfig)
+        else:
+            try:
+                config.load_incluster_config()
+            except config.ConfigException:
+                config.load_kube_config()
+    except Exception as e:
+        logger.error(f"Failed to load Kubernetes config: {e}")
+        return False
 
     batch_v1 = client.BatchV1Api()
     core_v1 = client.CoreV1Api()
@@ -1070,12 +1086,13 @@ def check_readiness_job_result(job_name: str, namespace: str) -> bool:
         return False
 
 
-def delete_readiness_check_job(job_name: str, namespace: str):
+def delete_readiness_check_job(job_name: str, namespace: str, kubeconfig: Optional[str] = None):
     """Delete the readiness check Job.
 
     Args:
         job_name: Job name
         namespace: Kubernetes namespace
+        kubeconfig: Path to kubeconfig file
     """
     try:
         from kubernetes import client, config
@@ -1084,9 +1101,16 @@ def delete_readiness_check_job(job_name: str, namespace: str):
         return
 
     try:
-        config.load_incluster_config()
-    except config.ConfigException:
-        config.load_kube_config()
+        if kubeconfig:
+            config.load_kube_config(config_file=kubeconfig)
+        else:
+            try:
+                config.load_incluster_config()
+            except config.ConfigException:
+                config.load_kube_config()
+    except Exception as e:
+        logger.error(f"Failed to load Kubernetes config: {e}")
+        return
 
     batch_v1 = client.BatchV1Api()
 
@@ -1296,7 +1320,7 @@ def wait_for_service_ready(
 
         try:
             create_readiness_check_job(
-                service_name, namespace, readiness_check_job_name
+                service_name, namespace, readiness_check_job_name, kubeconfig
             )
             logger.info(
                 f"Created readiness check Job '{readiness_check_job_name}' for ClusterIP service"
@@ -1315,7 +1339,7 @@ def wait_for_service_ready(
             try:
                 # For ClusterIP services, check readiness via the Kubernetes Job we created
                 if readiness_check_job_name:
-                    if check_readiness_job_result(readiness_check_job_name, namespace):
+                    if check_readiness_job_result(readiness_check_job_name, namespace, kubeconfig):
                         # Service is ready!
                         logger.debug(
                             f"Service ready: readiness check Job {readiness_check_job_name} succeeded"
@@ -1324,7 +1348,7 @@ def wait_for_service_ready(
                         # DEBUG DISABLED: with open("/home/thibrahi/workspace/auto-tune/llm-d-integration/.cursor/debug.log", "a") as f:
                         # DEBUG DISABLED: f.write(json.dumps({"sessionId":"debug-session","runId":"wait-service-ready","hypothesisId":"D","location":"helm_utils.py:700","message":"Service ready via readiness check Job","data":{"job_name":readiness_check_job_name},"timestamp":int(time.time()*1000)})+"\n")
                         # DEBUG DISABLED: #endregion
-                        delete_readiness_check_job(readiness_check_job_name, namespace)
+                        delete_readiness_check_job(readiness_check_job_name, namespace, kubeconfig)
                         return True
 
                 # For non-ClusterIP services or if pod check failed, try HTTP connection
@@ -1372,7 +1396,7 @@ def wait_for_service_ready(
         # Cleanup readiness check job if it still exists
         if readiness_check_job_name:
             try:
-                delete_readiness_check_job(readiness_check_job_name, namespace)
+                delete_readiness_check_job(readiness_check_job_name, namespace, kubeconfig)
                 logger.info(
                     f"Cleaned up readiness check Job '{readiness_check_job_name}' after interrupt"
                 )
@@ -1385,7 +1409,7 @@ def wait_for_service_ready(
         # Cleanup readiness check job if it still exists
         if readiness_check_job_name:
             try:
-                delete_readiness_check_job(readiness_check_job_name, namespace)
+                delete_readiness_check_job(readiness_check_job_name, namespace, kubeconfig)
             except Exception as cleanup_e:
                 logger.debug(
                     f"Error cleaning up readiness check Job '{readiness_check_job_name}': {cleanup_e}"
@@ -1735,9 +1759,9 @@ for line in summary_content.splitlines():
         errors_found = True
         print(f"[WARNING] MLPerf reported errors: {{line}}")
 
-    # Extract: "Tokens per second: 307.598"
-    # Note: Looking for exact format from MLPerf summary, not "completed tokens per second"
-    if line_lower.startswith("tokens per second") and ":" in line:
+    # Extract: "Tokens per second: 307.598" (Offline) or "Completed tokens per second: 6094.77" (Server)
+    # Handle both "tokens per second" and "completed tokens per second"
+    if ("tokens per second" in line_lower) and ":" in line:
         parts = line.split(":", 1)
         if len(parts) == 2:
             try:
@@ -1747,8 +1771,9 @@ for line in summary_content.splitlines():
             except ValueError as e:
                 print(f"[DEBUG] Could not parse value from: {{line}} - {{e}}")
 
-    # Extract: "Samples per second: 102.533"
-    if line_lower.startswith("samples per second") and ":" in line:
+    # Extract: "Samples per second: 102.533" (Offline) or "Completed samples per second: 4.41" (Server)
+    # Handle both "samples per second" and "completed samples per second"
+    if ("samples per second" in line_lower) and ":" in line:
         parts = line.split(":", 1)
         if len(parts) == 2:
             try:

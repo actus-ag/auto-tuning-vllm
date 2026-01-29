@@ -55,6 +55,8 @@ class BenchmarkConfig:
         None  # Coalesce queries flag for Server scenario (tunable)
     )
     test_mode: str = "performance"  # Test mode (default: "performance")
+    enable_metrics: bool = False  # Enable metrics collection (default: False)
+    tensor_parallel_size: Optional[int] = None  # Tensor parallelism size (for MLflow tagging)
 
     def merge_tunables(self, tunable_values: Dict[str, Any]) -> "BenchmarkConfig":
         """Merge tunable parameter values into this config, returning a new instance.

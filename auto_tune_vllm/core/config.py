@@ -749,6 +749,10 @@ class ConfigValidator:
         # Build BenchmarkConfig from constants only
         benchmark = BenchmarkConfig(**benchmark_constants)
 
+        # Inject tensor_parallel_size from static_params for MLflow tagging
+        if "tensor_parallel_size" in static_params:
+            benchmark.tensor_parallel_size = static_params["tensor_parallel_size"]
+
         # Build benchmark tunables using same logic as vLLM parameters
         validated_benchmark_tunables = {}
         for tunable_name, tunable_config in benchmark_tunables_raw.items():
