@@ -1905,6 +1905,37 @@ class HelmTrialController(BaseTrialController):
             self._stop_health_monitoring()
             controller_logger.debug("Trial Controller: Health monitoring stopped")
 
+            # Collect benchmark pod logs BEFORE deletion
+            if self.benchmark_job_name:
+                controller_logger.info(
+                    f"Collecting logs from benchmark Job {self.benchmark_job_name}"
+                )
+                try:
+                    from .pod_log_collector import collect_and_store_job_pod_logs
+
+                    pg_url = (
+                        trial_config.logging_config.get("database_url")
+                        if trial_config.logging_config
+                        else None
+                    )
+                    if pg_url:
+                        success = collect_and_store_job_pod_logs(
+                            job_name=self.benchmark_job_name,
+                            namespace=self.namespace,
+                            study_name=trial_config.study_name,
+                            trial_id=trial_config.trial_id,
+                            pg_url=pg_url,
+                            kubeconfig=None,
+                        )
+                        if success:
+                            controller_logger.info("Benchmark pod logs collected successfully")
+                        else:
+                            controller_logger.warning("Failed to collect benchmark pod logs")
+                    else:
+                        controller_logger.debug("No PostgreSQL URL, skipping pod log collection")
+                except Exception as e:
+                    controller_logger.warning(f"Error collecting benchmark pod logs: {e}")
+
             # Cleanup benchmark Job
             if self.benchmark_job_name:
                 try:
@@ -2313,6 +2344,67 @@ class KubernetesTrialController(BaseTrialController):
             controller_logger.info("Trial Controller: Stopping health monitoring...")
             self._stop_health_monitoring()
             controller_logger.debug("Trial Controller: Health monitoring stopped")
+
+            # Collect vLLM pod logs BEFORE backend cleanup
+            controller_logger.info(
+                f"Collecting logs from vLLM Deployment {self.deployment_name}"
+            )
+            try:
+                from .pod_log_collector import collect_and_store_deployment_pod_logs
+
+                pg_url = (
+                    trial_config.logging_config.get("database_url")
+                    if trial_config.logging_config
+                    else None
+                )
+                if pg_url:
+                    success = collect_and_store_deployment_pod_logs(
+                        deployment_name=self.deployment_name,
+                        trial_id=trial_config.trial_id,
+                        namespace=self.namespace,
+                        study_name=trial_config.study_name,
+                        pg_url=pg_url,
+                        kubeconfig=self.kubeconfig,
+                    )
+                    if success:
+                        controller_logger.info("vLLM pod logs collected successfully")
+                    else:
+                        controller_logger.warning("Failed to collect vLLM pod logs")
+                else:
+                    controller_logger.debug("No PostgreSQL URL, skipping pod log collection")
+            except Exception as e:
+                controller_logger.warning(f"Error collecting vLLM pod logs: {e}")
+
+            # Collect benchmark pod logs BEFORE deletion
+            if self.benchmark_job_name:
+                controller_logger.info(
+                    f"Collecting logs from benchmark Job {self.benchmark_job_name}"
+                )
+                try:
+                    from .pod_log_collector import collect_and_store_job_pod_logs
+
+                    pg_url = (
+                        trial_config.logging_config.get("database_url")
+                        if trial_config.logging_config
+                        else None
+                    )
+                    if pg_url:
+                        success = collect_and_store_job_pod_logs(
+                            job_name=self.benchmark_job_name,
+                            namespace=self.namespace,
+                            study_name=trial_config.study_name,
+                            trial_id=trial_config.trial_id,
+                            pg_url=pg_url,
+                            kubeconfig=self.kubeconfig,
+                        )
+                        if success:
+                            controller_logger.info("Benchmark pod logs collected successfully")
+                        else:
+                            controller_logger.warning("Failed to collect benchmark pod logs")
+                    else:
+                        controller_logger.debug("No PostgreSQL URL, skipping pod log collection")
+                except Exception as e:
+                    controller_logger.warning(f"Error collecting benchmark pod logs: {e}")
 
             # Cleanup benchmark Job
             if self.benchmark_job_name:
