@@ -656,6 +656,8 @@ class MLPerfBenchmark(BenchmarkProvider):
                         str(config.server_coalesce_queries).lower(),
                     ]
                 )
+            if config.num_workers is not None:
+                cmd.extend(["--num-workers", str(config.num_workers)])
 
         self._logger.info(f"MLPerf command: {' '.join(cmd)}")
 
