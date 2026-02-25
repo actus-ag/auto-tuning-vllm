@@ -967,6 +967,20 @@ class StudyController:
                 f"Stored error attributes for trial {trial_number}: {result.error_type}"
             )
 
+        # Store result validity for successful trials
+        if result.success and result.detailed_metrics:
+            if "result_valid" in result.detailed_metrics:
+                result_valid = result.detailed_metrics["result_valid"]
+                # Store as both boolean and string for filtering in Optuna dashboard
+                trial.set_user_attr("result_valid", result_valid)
+                trial.set_user_attr(
+                    "result_status", "VALID" if result_valid else "INVALID"
+                )
+                logger.info(
+                    f"Stored result validity for trial {trial_number}: "
+                    f"{'VALID' if result_valid else 'INVALID'}"
+                )
+
         # Log timing attributes stored
         if result.execution_info:
             logger.debug(

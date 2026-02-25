@@ -638,8 +638,15 @@ class MLPerfBenchmark(BenchmarkProvider):
                     "server_target_qps must be specified for Server scenario"
                 )
             cmd.extend(["--server-target-qps", str(config.server_target_qps)])
-            if config.server_coalesce_queries:
-                cmd.append("--server-coalesce-queries")
+            if config.server_coalesce_queries is not None:
+                cmd.extend(
+                    [
+                        "--server-coalesce-queries",
+                        str(config.server_coalesce_queries).lower(),
+                    ]
+                )
+            if config.num_workers is not None:
+                cmd.extend(["--num-workers", str(config.num_workers)])
 
         self._logger.info(f"MLPerf command: {' '.join(cmd)}")
 
