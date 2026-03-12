@@ -337,7 +337,11 @@ class GuideLLMBenchmark(BenchmarkProvider):
             "--output-path",
             results_file,
             "--processor-args",
-            '{"trust-remote-code":"true"}'
+            '{"trust-remote-code":"true"}',
+            "--request-formatter-kwargs",
+            '{"extras":{"include_reasoning":true}}',
+            "--request-type",
+            "text_completions"
         ]
 
         # Add dataset or synthetic data configuration
