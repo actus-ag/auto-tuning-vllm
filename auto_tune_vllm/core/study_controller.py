@@ -929,11 +929,13 @@ class StudyController:
                 f"status={result.execution_info.trial_status}"
             )
 
-        # Store TTFT and TPOT mean as Optuna user attributes for dashboard columns
+        # Store TTFT and TPOT metrics as Optuna user attributes for dashboard
         if result.success and result.detailed_metrics:
             for attr_name, metric_key in {
                 "ttft_mean_ms": "time_to_first_token_ms_mean",
+                "ttft_p95_ms": "time_to_first_token_ms_p95",
                 "tpot_mean_ms": "inter_token_latency_ms_mean",
+                "tpot_p95_ms": "inter_token_latency_ms_p95",
             }.items():
                 value = result.detailed_metrics.get(metric_key)
                 if value is not None:
@@ -941,7 +943,9 @@ class StudyController:
             logger.info(
                 f"Stored TTFT/TPOT for trial {trial_number}: "
                 f"ttft_mean={result.detailed_metrics.get('time_to_first_token_ms_mean')}, "
-                f"tpot_mean={result.detailed_metrics.get('inter_token_latency_ms_mean')}"
+                f"ttft_p95={result.detailed_metrics.get('time_to_first_token_ms_p95')}, "
+                f"tpot_mean={result.detailed_metrics.get('inter_token_latency_ms_mean')}, "
+                f"tpot_p95={result.detailed_metrics.get('inter_token_latency_ms_p95')}"
             )
 
     def get_best_baseline_result(self) -> list[float] | None:
