@@ -13,7 +13,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-import ray
+try:
+    import ray
+    _RAY_AVAILABLE = True
+except ImportError:
+    ray = None
+    _RAY_AVAILABLE = False
 
 from ..core.trial import TrialConfig, TrialResult
 
@@ -22,21 +27,22 @@ logger = logging.getLogger(__name__)
 
 # Simple Ray actor to hold cancellation state that can be modified externally
 
-@ray.remote
-class CancellationFlag:
-    """Lightweight Ray actor to hold mutable cancellation state."""
+if _RAY_AVAILABLE:
+    @ray.remote
+    class CancellationFlag:
+        """Lightweight Ray actor to hold mutable cancellation state."""
 
-    def __init__(self):
-        self.cancelled = False
+        def __init__(self):
+            self.cancelled = False
 
-    def request_cancellation(self):
-        """Set cancellation flag to True."""
-        self.cancelled = True
-        return True
+        def request_cancellation(self):
+            """Set cancellation flag to True."""
+            self.cancelled = True
+            return True
 
-    def is_cancelled(self):
-        """Check if cancellation was requested."""
-        return self.cancelled
+        def is_cancelled(self):
+            """Check if cancellation was requested."""
+            return self.cancelled
 
 @dataclass
 class JobHandle:
