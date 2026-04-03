@@ -11,8 +11,14 @@ from abc import ABC, abstractmethod
 from enum import Enum, auto
 from typing import Optional
 
-import ray
-from ray.exceptions import GetTimeoutError
+try:
+    import ray
+    from ray.exceptions import GetTimeoutError
+    _RAY_AVAILABLE = True
+except ImportError:
+    ray = None
+    GetTimeoutError = Exception
+    _RAY_AVAILABLE = False
 
 from ..benchmarks.providers import BenchmarkProvider, GuideLLMBenchmark
 from ..core.trial import ExecutionInfo, TrialConfig, TrialResult
@@ -89,8 +95,11 @@ class BaseTrialController(TrialController):
             "vllm": "vLLM serving framework",
             "guidellm": "GuideLLM benchmarking tool",
             "optuna": "Optuna optimization framework",
-            "ray": "Ray distributed computing",
         }
+
+        # Only require Ray if running on a Ray backend
+        if _RAY_AVAILABLE:
+            required_packages["ray"] = "Ray distributed computing"
 
         # Only require psycopg2 if using PostgreSQL
         using_postgresql = False
@@ -143,7 +152,7 @@ class BaseTrialController(TrialController):
 
         # Check GPU availability using Ray cluster resources
         try:
-            if ray.is_initialized():
+            if _RAY_AVAILABLE and ray.is_initialized():
                 cluster_resources = ray.cluster_resources()
                 available_resources = ray.available_resources()
 
@@ -592,7 +601,7 @@ class BaseTrialController(TrialController):
 
         # Ray GPU resources and accelerator information
         try:
-            if ray.is_initialized():
+            if _RAY_AVAILABLE and ray.is_initialized():
                 cluster_resources = ray.cluster_resources()
                 available_resources = ray.available_resources()
 
@@ -651,7 +660,7 @@ class BaseTrialController(TrialController):
 
         # Ray worker info (if available)
         try:
-            if ray.is_initialized():
+            if _RAY_AVAILABLE and ray.is_initialized():
                 runtime_ctx = ray.get_runtime_context()
                 logger.info(f"Ray node ID: {runtime_ctx.get_node_id()}")
                 logger.info(f"Ray worker ID: {runtime_ctx.get_worker_id()}")
@@ -1367,16 +1376,17 @@ class RayWorkerTrialController(BaseTrialController):
 
 
 # Ray remote actor wrapper
-@ray.remote
-class RayTrialActor(RayWorkerTrialController):
-    """Ray remote actor for distributed trial execution."""
+if _RAY_AVAILABLE:
+    @ray.remote
+    class RayTrialActor(RayWorkerTrialController):
+        """Ray remote actor for distributed trial execution."""
 
-    def run_trial(
-        self, trial_config: TrialConfig, cancellation_flag_actor=None
-    ) -> TrialResult:
-        """Run trial on Ray worker with optional cancellation flag actor."""
-        return super().run_trial(trial_config, cancellation_flag_actor)
+        def run_trial(
+            self, trial_config: TrialConfig, cancellation_flag_actor=None
+        ) -> TrialResult:
+            """Run trial on Ray worker with optional cancellation flag actor."""
+            return super().run_trial(trial_config, cancellation_flag_actor)
 
-    def __del__(self):
-        """Ensure cleanup on actor destruction."""
-        self.cleanup_resources()
+        def __del__(self):
+            """Ensure cleanup on actor destruction."""
+            self.cleanup_resources()
