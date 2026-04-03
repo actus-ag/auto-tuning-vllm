@@ -1,4 +1,8 @@
-"""Trial controller implementations for Ray and local execution."""
+"""Trial controller implementations for Ray and local execution.
+
+Modified by actus-ag (2026): Made Ray import lazy and guarded all
+Ray-specific calls so local execution works without Ray installed.
+"""
 
 from __future__ import annotations
 

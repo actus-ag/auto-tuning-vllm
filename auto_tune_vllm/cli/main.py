@@ -1,4 +1,8 @@
-"""Command-line interface for auto-tune-vllm."""
+"""Command-line interface for auto-tune-vllm.
+
+Modified by actus-ag (2026): Added local execution backend support
+as default, made Ray backend optional.
+"""
 
 import logging
 import shutil
