@@ -1,4 +1,8 @@
-"""Execution backend abstractions for Ray and local execution."""
+"""Execution backend abstractions for Ray and local execution.
+
+Modified by actus-ag (2026): Made Ray import lazy so the module can
+be imported without Ray installed (local backend only).
+"""
 
 from __future__ import annotations
 

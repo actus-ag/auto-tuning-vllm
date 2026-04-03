@@ -1,40 +1,31 @@
 ## Quick Start Guide
 
-The steps below help you set up the environment, validate your configuration, and launch an optimization study with Ray.
+The steps below help you set up the environment, validate your configuration, and launch an optimization study.
 
 ### Prerequisites
 
 - Python 3.12 recommended
-- NVIDIA GPU with recent drivers for GPU-backed studies (CPU runs are possible but limited)
+- NVIDIA GPU with recent drivers
 - Internet access for pulling Python wheels and models
 
-### 1) Create a Virtual Environment
+### 1) Installation
 
-Use either uv (recommended) or venv. Pick one.
+#### Option A: Native Install
 
 ```bash
-# uv (installs Python if needed)
+# Clone the fork
+git clone https://github.com/actus-ag/auto-tuning-vllm.git
+cd auto-tuning-vllm
+
+# Create virtual environment (uv recommended)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
-uv python install 3.12
 uv venv --python 3.12 venv
 source venv/bin/activate
 
-# OR: venv
-python3.12 -m venv venv
-source venv/bin/activate
-```
-
-### 2) Install the Project (editable)
-
-Install in editable mode so the CLI is available and source edits are reflected immediately.
-
-```bash
-# Using uv
+# Install
 uv pip install -e .
-
-# OR: pip
-pip install -e .
+# OR: pip install -e .
 ```
 
 Verify the CLI is on PATH:
@@ -43,9 +34,92 @@ Verify the CLI is on PATH:
 auto-tune-vllm --help
 ```
 
-### 3) Configure the Study
+#### Option B: Docker Compose (Recommended for Production) {#docker-compose}
 
-Start from [`examples/study_config_local_exec.yaml`](../examples/study_config_local_exec.yaml) for a full example configuration file.
+No host installation needed. Create a `docker-compose.yml`:
+
+```yaml
+services:
+  auto-tune:
+    image: vllm/vllm-openai:latest
+    command: >
+      bash -c "
+        pip install git+https://github.com/actus-ag/auto-tuning-vllm.git &&
+        pip install guidellm &&
+        auto-tune-vllm optimize
+          --config /workspace/study_config.yaml
+          --max-concurrent-trials 1
+      "
+    volumes:
+      - ./study_config.yaml:/workspace/study_config.yaml   # Your study config
+      - ./results:/workspace/optuna_studies                 # Persist results
+      - ./logs:/tmp/auto-tune-vllm/logs                    # Persist logs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1              # Number of GPUs to expose
+              capabilities: [gpu]
+    ipc: host                       # Required for PyTorch shared memory
+    shm_size: '16gb'                # Sufficient shared memory for large models
+```
+
+Run it:
+
+```bash
+docker compose up
+```
+
+**Key points about Docker execution:**
+- The container needs GPU access (`deploy.resources.reservations.devices`)
+- `ipc: host` and `shm_size` are required for PyTorch/vLLM shared memory
+- auto-tune-vllm manages the full vLLM lifecycle inside the container — it starts/stops vLLM as a subprocess for each trial, not via Docker
+- Results persist to `./results/` via the volume mount
+- To pin specific GPUs (e.g., leave GPU 1 free for other tasks), add to your study config:
+  ```yaml
+  static_environment_variables:
+    CUDA_VISIBLE_DEVICES: "0"
+  ```
+
+**Multi-GPU Docker example** (use both GPUs for tensor parallelism):
+
+```yaml
+services:
+  auto-tune:
+    image: vllm/vllm-openai:latest
+    command: >
+      bash -c "
+        pip install git+https://github.com/actus-ag/auto-tuning-vllm.git &&
+        pip install guidellm &&
+        auto-tune-vllm optimize
+          --config /workspace/study_config.yaml
+          --max-concurrent-trials 1
+      "
+    volumes:
+      - ./study_config.yaml:/workspace/study_config.yaml
+      - ./results:/workspace/optuna_studies
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 2
+              capabilities: [gpu]
+    ipc: host
+    shm_size: '16gb'
+```
+
+With a study config that includes:
+
+```yaml
+static_parameters:
+  tensor_parallel_size: 2   # Use both GPUs for model parallelism
+```
+
+### 2) Configure the Study
+
+Start from [`examples/study_config_local_exec.yaml`](../examples/study_config_local_exec.yaml) for a full example.
 
 Key configuration areas:
 - Set/confirm the study name and model ([Study Configuration](configuration.md#study-configuration))
@@ -72,7 +146,7 @@ benchmark:
   output_tokens: 2000       # Output length
 
 logging:
-  file_path: "/tmp/auto-tune-vllm-local-run/logs"
+  file_path: "/tmp/auto-tune-vllm/logs"
   log_level: "INFO"
 
 parameters:
@@ -84,8 +158,6 @@ parameters:
     enabled: true
     options: ["auto", "fp8"]
 ```
-
-
 
 #### Using Optimization Presets (Recommended)
 
@@ -102,32 +174,13 @@ optimization:
 - `"low_latency"`: Minimize request latency (95th percentile)
 - `"balanced"`: Multi-objective optimization (throughput vs latency)
 
-**To customize or add presets:**
-- Edit the `_apply_preset()` method in `auto_tune_vllm/core/config.py` (line 139)
-- Add new preset conditions or modify existing ones
-
 #### What Gets Optimized
 
 The optimizer will tune parameters you mark as `enabled: true` in your config. Parameters you don't specify use vLLM defaults.
 
-**Quick example:**
-```yaml
-parameters:
-  gpu_memory_utilization:
-    enabled: true
-    min: 0.85
-    max: 0.95
-  # Other parameters use vLLM defaults
-```
-
-**To customize optimization ranges** (for better results after initial studies):
-- Edit `auto_tune_vllm/schemas/v0_10_1_1.yaml` or `auto_tune_vllm/schemas/v0_10_0_0.yaml`
-- Narrow ranges around promising values from previous runs
-- **Don't change the `default` values** - only adjust `min`/`max`/`options`
-
 > 💡 **Tip**: Start simple with 2-3 key parameters, then expand based on results. See [Parameter Configuration](configuration.md#parameter-configuration) for all available parameters.
 
-### 4) Validate Configuration
+### 3) Validate Configuration
 
 Always validate before launching optimization:
 
@@ -135,45 +188,53 @@ Always validate before launching optimization:
 auto-tune-vllm validate --config examples/study_config_local_exec.yaml
 ```
 
-### 5) Run Optimization (Ray)
+### 4) Run Optimization
 
-Ray workers must run in a Python environment you control. Provide one of:
-- `--venv-path /absolute/path/to/venv`
-- `--python-executable /absolute/path/to/python`
-- `--conda-env <conda-env-name>`
+#### Local Backend (Default)
 
-Use an existing Ray cluster (recommended if one is already running):
+No Ray, no extra flags — just run:
 
 ```bash
 auto-tune-vllm optimize \
   --config examples/study_config_local_exec.yaml \
-  --venv-path "$(pwd)/venv" \
-  --max-concurrent-trials <count>
+  --max-concurrent-trials 1
 ```
 
-Start a new Ray head locally (when no cluster is running):
+For multiple GPUs running independent trials:
 
 ```bash
 auto-tune-vllm optimize \
   --config examples/study_config_local_exec.yaml \
+  --max-concurrent-trials 2
+```
+
+#### Ray Backend (Multi-Node)
+
+For distributed optimization across a cluster, use `--backend ray`. Ray workers must run in a Python environment you control:
+
+```bash
+# With an existing Ray cluster
+auto-tune-vllm optimize \
+  --config examples/study_config_local_exec.yaml \
+  --backend ray \
   --venv-path "$(pwd)/venv" \
-  --max-concurrent-trials <count> \
+  --max-concurrent-trials 4
+
+# Auto-start a local Ray head (single machine)
+auto-tune-vllm optimize \
+  --config examples/study_config_local_exec.yaml \
+  --backend ray \
+  --venv-path "$(pwd)/venv" \
+  --max-concurrent-trials 2 \
   --start-ray-head
 ```
 
-Notes:
-- If a Ray cluster is already running, omit `--start-ray-head` to avoid port conflicts.
-- To manually start Ray (and then omit `--start-ray-head`):
-  ```bash
-  ray start --head --dashboard-host=0.0.0.0
-  ```
-
-### 6) Monitor Logs
+### 5) Monitor Logs
 
 Open a separate terminal. After optimization starts, the CLI prints an exact logs command. For file-based logging:
 
 ```bash
-auto-tune-vllm logs --study-id <your_study_id> --log-path ./logs
+auto-tune-vllm logs --study-name <your_study_name> --log-path ./logs
 ```
 
 If you configured PostgreSQL logging:
@@ -184,51 +245,44 @@ auto-tune-vllm logs --study-name <your_study_name> --database-url postgresql://u
 
 > See [Logging Configuration](configuration.md#logging-configuration) for detailed logging options.
 
-### View Study in Optuna Dashboard
+### 6) View Results in Optuna Dashboard
 
 Use the Optuna Dashboard Web UI (no local install needed):
 
-- Open the dashboard in your browser: https://optuna.github.io/optuna-dashboard/#/
-- After your study finishes, locate the SQLite file created by the run:
-  - `optuna_studies/<study_name>/study.db`
-- Drag-and-drop the `study.db` file into the dashboard page.
+1. Open the dashboard in your browser: https://optuna.github.io/optuna-dashboard/#/
+2. After your study finishes, locate the SQLite file:
+   - `optuna_studies/<study_name>/study.db`
+3. Drag-and-drop the `study.db` file into the dashboard page.
 
-You can now explore optimization history, parameter importance, and parallel coordinates to see how configurations evolved over the study.
+You can now explore optimization history, parameter importance, and parallel coordinates.
 
 ### Troubleshooting
 
-- Error: "At least one Python environment option must be specified"
-  - Provide one of `--venv-path`, `--python-executable`, or `--conda-env`.
-  - Example:
-    ```bash
-    auto-tune-vllm optimize \
-      --config examples/study_config_local_exec.yaml \
-      --venv-path "$(pwd)/venv"
-    ```
+- **Error: "At least one Python environment option must be specified"**
+  - This only applies to `--backend ray`. Either provide `--venv-path`, or use `--backend local` (the default).
 
-- Ray is already running on this port
-  - A cluster is active. Either connect without `--start-ray-head`, or manually start Ray on a different port and then omit `--start-ray-head`.
-  - Example manual start on another port:
+- **Ray is already running on this port**
+  - A cluster is active. Either connect without `--start-ray-head`, or stop it:
     ```bash
     ray stop --force
-    ray start --head --port=6380 --dashboard-host=0.0.0.0
     ```
 
-- Ray version mismatch between cluster and local
-  - Align your local Ray version with the cluster (or stop the cluster and start fresh):
-    ```bash
-    # Match local to cluster
-    uv pip install "ray==<cluster_version>"
-    # Or stop the old cluster and start a new one locally
-    ray stop --force
-    ray start --head --dashboard-host=0.0.0.0
-    ```
-- **Important**: Add `--max-concurrent-trials <count>` or set `max_concurrent_trials: <count>` in your YAML config.
+- **Docker: vLLM OOM during model loading**
+  - Increase `shm_size` in your compose file
+  - Lower `gpu_memory_utilization` range in your study config
+  - Use a quantized model (FP8/INT4)
+
+- **Docker: Results not persisted**
+  - Ensure `./results:/workspace/optuna_studies` volume is mounted
+  - Check that the `study.storage_file` path in your config is under `/workspace/optuna_studies`
+
+- **Important**: Always add `--max-concurrent-trials <count>` or set `max_concurrent_trials: <count>` in your YAML config.
 
 ### Next Steps
 
-- Inspect resources on your cluster: `auto-tune-vllm check-env --ray-cluster`
-- Calibrate concurrency based on available GPUs (e.g., 1 GPU per trial to start)
 - Explore advanced configuration options: [Configuration Guide](configuration.md)
+- For multi-node: [Ray Cluster Setup](ray_cluster_setup.md)
+- Inspect Ray cluster resources: `auto-tune-vllm check-env --ray-cluster`
 
-Project home: [Auto‑Tune vLLM (GitHub)](https://github.com/openshift-psap/auto-tuning-vllm/tree/main)
+Project home: [actus-ag/auto-tuning-vllm (GitHub)](https://github.com/actus-ag/auto-tuning-vllm)
+Upstream: [openshift-psap/auto-tuning-vllm (GitHub)](https://github.com/openshift-psap/auto-tuning-vllm)
